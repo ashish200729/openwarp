@@ -1,0 +1,7 @@
+people.example.com {
+  encode zstd gzip
+  header Strict-Transport-Security "max-age=31536000"
+  reverse_proxy 127.0.0.1:3080 {
+    header_up X-OpenWarp-Client-IP {remote_host}
+  }
+}

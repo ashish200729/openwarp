@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { ArrowDown, ArrowRight, ArrowUpRight, GitFork, History, ListChecks, Network, Terminal } from "lucide-react";
 import { Brand, repositoryUrl } from "@/components/brand";
 import { ButtonPixels, primaryButton, secondaryButton } from "@/components/ui";
@@ -14,12 +15,13 @@ export default function HomePage() {
   return (
     <>
       <header className="border-b border-line/80">
-        <div className="mx-auto flex min-h-16 max-w-[80rem] items-center justify-between gap-4 px-5 sm:px-8 lg:px-10">
+        <div className="mx-auto flex min-h-16 max-w-[80rem] flex-wrap items-center justify-between gap-x-2 gap-y-1 px-4 py-2 sm:gap-x-4 sm:px-8 lg:px-10">
           <Brand />
           <nav aria-label="Main navigation" className="flex items-center gap-3 sm:gap-6">
             <a href="#product" className="hidden min-h-11 items-center rounded-sm text-sm text-muted hover:text-foreground sm:inline-flex">Product</a>
             <a href="#self-host" className="hidden min-h-11 items-center rounded-sm text-sm text-muted hover:text-foreground sm:inline-flex">Self-hosting</a>
-            <a href={repositoryUrl} className={`${secondaryButton} min-h-10`}><GitFork aria-hidden="true" size={15} /> GitHub</a>
+            <a href={repositoryUrl} className="hidden min-h-11 items-center gap-2 rounded-sm text-sm text-muted hover:text-foreground sm:inline-flex"><GitFork aria-hidden="true" size={15} /> GitHub</a>
+            <Link href="/login" className={secondaryButton}>Open workspace <ArrowUpRight aria-hidden="true" size={15} className="hidden sm:block" /></Link>
           </nav>
         </div>
       </header>

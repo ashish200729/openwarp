@@ -1,0 +1,57 @@
+name: openwarp
+
+services:
+  db:
+    image: postgres:17-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: openwarp_owner
+      POSTGRES_DB: openwarp
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      OPENWARP_DB_PASSWORD: ${OPENWARP_DB_PASSWORD:?Set OPENWARP_DB_PASSWORD in .env}
+    volumes:
+      - database:/var/lib/postgresql/data
+      - ./deploy/init-app-role.sh:/docker-entrypoint-initdb.d/10-app-role.sh:ro
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -h 127.0.0.1 -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    build:
+      context: .
+      target: migrate
+    environment:
+      MIGRATION_DATABASE_URL: postgresql://openwarp_owner:${POSTGRES_PASSWORD}@db:5432/openwarp
+    depends_on:
+      db:
+        condition: service_healthy
+
+  app:
+    build:
+      context: .
+      target: app
+    restart: unless-stopped
+    init: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      DATABASE_URL: postgresql://openwarp_app:${OPENWARP_DB_PASSWORD}@db:5432/openwarp
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?Set BETTER_AUTH_SECRET in .env}
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:?Set BETTER_AUTH_URL in .env}
+      OPENWARP_WORKSPACE_NAME: ${OPENWARP_WORKSPACE_NAME:-People workspace}
+    ports:
+      - '127.0.0.1:${OPENWARP_PORT:-3080}:3000'
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [CMD, node, -e, 'fetch("http://127.0.0.1:3000/api/health").then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))']
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 4
+
+volumes:
+  database:
