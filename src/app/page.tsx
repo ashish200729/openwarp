@@ -5,6 +5,8 @@ import { ButtonPixels, primaryButton, secondaryButton } from "@/components/ui";
 import { DirectoryPreview } from "@/components/marketing/directory-preview";
 import { WorkforceChart } from "@/components/marketing/workforce-chart";
 
+export const dynamic = "force-dynamic";
+
 const capabilities = [
   { title: "Employee directory", description: "Find anyone by name, role, or team. See who reports to whom and keep work details current.", icon: Network, color: "text-orchid" },
   { title: "Onboarding and offboarding", description: "Track what’s complete and what still needs doing when someone joins or leaves.", icon: ListChecks, color: "text-rose" },
@@ -25,7 +27,7 @@ export default function HomePage() {
           </nav>
         </div>
       </header>
-      <main id="main" className="mx-auto max-w-[80rem] px-5 sm:px-8 lg:px-10">
+      <main id="main" tabIndex={-1} className="mx-auto max-w-[80rem] px-5 sm:px-8 lg:px-10">
         <section className="grid items-center gap-9 pb-12 pt-12 sm:gap-12 sm:py-16 lg:grid-cols-[minmax(0,1.14fr)_minmax(0,1fr)] lg:gap-10 lg:pb-[4.75rem] lg:pt-[5.25rem] xl:gap-14">
           <div className="min-w-0">
             <p className="flex items-center gap-2.5 font-mono text-[11px] font-medium tracking-[0.18em] text-accent uppercase"><span aria-hidden="true" className="pixel-fill size-2.5 [--pixel-size:6px] [--pixel:currentColor]" /> Open-source HR software</p>

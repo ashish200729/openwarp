@@ -25,3 +25,5 @@ Before upgrading, back up the database, record the running revision, review the 
 ## Accounts
 
 Use an administrator account for employee and access changes, and give directory-only users the viewer role. Employee creation adds a record, and operators separately provision sign-in accounts. Operator-managed password resets and disabling a login revoke sessions. Keep the machine running the account CLI restricted to trusted operators.
+
+App pages use a per-request Content Security Policy and prohibit shared caching. For replicated app servers, roll out the same built image to every replica so Server Actions use the same build and encryption key. [Next.js self-hosting guide](https://nextjs.org/docs/app/guides/self-hosting)

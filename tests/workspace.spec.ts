@@ -66,6 +66,8 @@ test("public landing is accessible and reflows on phones and desktops", async ({
   await checkA11y(page);
   await page.keyboard.press("Tab");
   await expect(page.getByRole("link", { name: "Skip to content" })).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("main")).toBeFocused();
   await page.getByRole("link", { name: "Open workspace" }).click();
   await expect(page.getByRole("heading", { name: "Sign in to OpenWarp" })).toBeVisible();
   await checkA11y(page);
@@ -108,6 +110,20 @@ test("administrators manage a complete employee lifecycle and viewers see only a
     expect((await viewerPage.request.get("/workspace/people/export")).status()).toBe(403);
     await viewerPage.goto("/workspace/activity");
     await expect(viewerPage.getByRole("heading", { name: "This page is unavailable" })).toBeVisible();
+
+    const staleAdmin = await browser.newContext({ baseURL, storageState: await page.context().storageState() });
+    try {
+      const stalePage = await staleAdmin.newPage();
+      await openEmployeeForm(stalePage, { first: "Stale", last: "Session", email: "stale@openwarp.example" });
+      await staleAdmin.clearCookies();
+      await staleAdmin.addCookies(await viewer.cookies());
+      await stalePage.getByRole("button", { name: "Add employee" }).click();
+      await expect(stalePage.getByRole("heading", { name: "This page is unavailable" })).toBeVisible();
+      const blocked = await page.request.get("/workspace/people/export?q=stale@openwarp.example");
+      expect(await blocked.text()).not.toContain("stale@openwarp.example");
+    } finally {
+      await staleAdmin.close();
+    }
 
     await page.goto("/workspace/lifecycle");
     await page.getByRole("link", { name: "Taylor Park" }).click();
@@ -181,7 +197,7 @@ test("administrators manage a complete employee lifecycle and viewers see only a
   await expect(page.getByText("Taylor Park", { exact: true })).toHaveCount(0);
   await page.goto("/workspace/activity");
   await expect(page.getByRole("heading", { name: "Activity", exact: true })).toBeVisible();
-  await expect(page.getByText("Exported the directory", { exact: true })).toBeVisible();
+  await expect(page.getByText("Exported the directory", { exact: true }).first()).toBeVisible();
   await page.getByRole("link", { name: "Older activity" }).click();
   await expect(page.getByRole("link", { name: "Latest activity" })).toBeVisible();
 
@@ -199,4 +215,32 @@ test("administrators manage a complete employee lifecycle and viewers see only a
   await page.goto("/workspace/people");
   await checkReflow(page);
   await checkA11y(page);
+  await page.getByText("Account", { exact: true }).click();
+  await expect(page.getByRole("link", { name: "My account" })).toBeVisible();
+});
+
+test("private pages use fresh script nonces and auth limits request size and repeated sign-ins", async ({ page, request, baseURL }) => {
+  const first = await page.goto("/login");
+  const policy = first?.headers()["content-security-policy"] ?? "";
+  const nonce = /'nonce-([^']+)'/.exec(policy)?.[1];
+  expect(nonce).toBeTruthy();
+  expect(policy).toContain("'strict-dynamic'");
+  expect(policy).not.toContain("unsafe-eval");
+  expect(first?.headers()["cache-control"]).toContain("no-store");
+  expect(await page.locator("script[nonce]").first().evaluate((script: HTMLScriptElement) => script.nonce)).toBe(nonce);
+  const second = await page.reload();
+  expect(second?.headers()["content-security-policy"]).not.toContain(`'nonce-${nonce}'`);
+
+  const oversized = await request.post("/api/auth/sign-in/email", { data: { email: "x".repeat(10_000), password: "invalid-password" } });
+  expect(oversized.status()).toBe(413);
+  const statusCodes: number[] = [];
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const response = await request.post("/api/auth/sign-in/email", {
+      headers: { Origin: baseURL! },
+      data: { email: "unknown@openwarp.example", password: "invalid-password" },
+    });
+    statusCodes.push(response.status());
+  }
+  expect(statusCodes).toContain(401);
+  expect(statusCodes).toContain(429);
 });

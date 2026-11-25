@@ -47,9 +47,8 @@ export default async function WorkspaceLayout({ children }: { children: ReactNod
         <header className="flex min-h-14 items-center gap-2.5 border-b border-line px-4 py-2 text-sm text-muted sm:px-7 lg:px-9">
           <span aria-hidden="true" className="pixel-fill size-2.5 shrink-0 [--pixel-size:5px] [--pixel:var(--accent)]" />
           <span className="wrap-anywhere">{workspaceName()}</span>
-          <span className="ml-auto shrink-0 rounded-sm border border-line px-2 py-1 font-mono text-[10px] tracking-wide text-muted uppercase">Self-hosted</span>
         </header>
-        <main id="main" className="mx-auto max-w-[82rem] px-4 py-7 sm:px-7 sm:py-9 lg:px-9 lg:py-10">{children}</main>
+        <main id="main" tabIndex={-1} className="mx-auto max-w-[82rem] px-4 py-7 sm:px-7 sm:py-9 lg:px-9 lg:py-10">{children}</main>
       </div>
     </div>
   );

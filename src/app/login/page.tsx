@@ -21,7 +21,7 @@ export default async function SignInPage() {
         <Brand />
         <Link href="/" className="flex min-h-11 items-center gap-2 rounded text-sm text-muted hover:text-foreground"><ArrowLeft aria-hidden="true" size={15} /> Home</Link>
       </div>
-      <main id="main" className="relative isolate grid place-items-center overflow-hidden px-5 py-12">
+      <main id="main" tabIndex={-1} className="relative isolate grid place-items-center overflow-hidden px-5 py-12">
         <div aria-hidden="true" className="pixel-grid absolute inset-0 -z-10 [mask-image:radial-gradient(ellipse_at_center,#000,transparent_65%)] [--pixel-size:13px] [--pixel:#34304a]" />
         <section className={`${panelStyle} w-full max-w-md p-6 sm:p-8`}>
           <span aria-hidden="true" className="pixel-fill block size-6 [--pixel-size:8px] [--pixel:var(--accent)]" />

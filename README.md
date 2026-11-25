@@ -65,3 +65,7 @@ Developers with their own Breeze UI license can enable the original shader behin
 3. Set `OPENWARP_ENABLE_BREEZE_READOUT=1` in `.env.local` and restart the development server or rebuild.
 
 Keep the token and the installed source out of Git and public artifacts. Refer to the [installation guide](https://www.breezeui.com/docs/installation.md), [component docs](https://www.breezeui.com/docs/components/readout.md), and [Breeze UI license](https://www.breezeui.com/license).
+
+## Checks
+
+`npm run check` runs lint, type checking, and the production build. Run `npx playwright install chromium` and `npm run verify:e2e` to exercise the browser workflows against a disposable Docker Compose stack. The test database and containers are removed afterward. The tests use synthetic data and randomly generated credentials.
