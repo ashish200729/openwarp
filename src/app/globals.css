@@ -1,0 +1,62 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+  --background: #0d0d10;
+  --foreground: #f3f2f0;
+  --panel: #141419;
+  --raised: #1a1a21;
+  --line: #2b2b35;
+  --control: #565663;
+  --muted: #a5a4b0;
+  --hint: #83828f;
+  --accent: #b6adff;
+  --accent-ink: #171027;
+  --orchid: #9780f1;
+  --rose: #e381a7;
+  --peach: #f0a36d;
+  --positive: #8ed7b7;
+  --danger: #f49b9b;
+}
+
+@theme inline {
+  --font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'Geist Mono Variable', ui-monospace, monospace;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-panel: var(--panel);
+  --color-raised: var(--raised);
+  --color-line: var(--line);
+  --color-control: var(--control);
+  --color-muted: var(--muted);
+  --color-hint: var(--hint);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-orchid: var(--orchid);
+  --color-rose: var(--rose);
+  --color-peach: var(--peach);
+  --color-positive: var(--positive);
+  --color-danger: var(--danger);
+}
+
+@layer base {
+  html { scroll-padding-top: 2rem; }
+  body { min-width: 0; }
+  ::selection { background: var(--accent); color: var(--accent-ink); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  button:not(:disabled), summary { cursor: pointer; }
+}
+
+@layer components {
+  .pixel-fill {
+    background-color: var(--pixel-base, transparent);
+    background-image: conic-gradient(var(--pixel) 25%, transparent 0 50%, var(--pixel) 0 75%, transparent 0);
+    background-position: left bottom;
+    background-size: var(--pixel-size, 8px) var(--pixel-size, 8px);
+  }
+
+  .pixel-grid {
+    background-image: radial-gradient(circle, var(--pixel) 1px, transparent 1.5px);
+    background-size: var(--pixel-size, 8px) var(--pixel-size, 8px);
+  }
+}
