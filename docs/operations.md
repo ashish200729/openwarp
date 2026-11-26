@@ -2,15 +2,15 @@
 
 ## Deploy
 
-Follow the [self-hosting guide](../README.md#self-host). Keep one OpenWarp deployment and database per company. Use the HTTPS reverse proxy for remote traffic, restrict database network access, and store the three generated secrets alongside other deployment credentials. Prefer a distinct database owner and runtime role when using an external PostgreSQL server. The runtime login must be named `openwarp_app` for the shipped grants. Grant it `CONNECT` on the database and keep schema creation restricted to the owner.
+Follow the [self-hosting guide](../README.md#self-host). Keep one OpenWarp deployment and database per company. Use the HTTPS reverse proxy for remote traffic, restrict database network access, and store the four generated secrets alongside other deployment credentials. Prefer a distinct database owner and runtime role when using an external PostgreSQL server. The runtime login must be named `openwarp_app` for the shipped grants. Grant it `CONNECT` on the database and keep schema creation restricted to the owner.
 
 `GET /api/health` returns `200` when the app can reach the migrated database and `503` during a configuration or database failure. Use it for readiness and inspect `docker compose ps` and `docker compose logs --tail=150 app migrate db` when a check fails.
 
-Use a narrow-access encrypted destination for backups and choose retention for employee data and activity history. Business schedules, privacy requirements and recovery targets vary by deployment. The activity log is retained until an operator applies a retention policy. Data exports include visible work fields, are audited, and are capped at 10,000 rows per download. Narrow the filters for larger directories.
+Use a narrow-access encrypted destination for backups and choose retention for employee data and activity history. Business schedules, privacy requirements and recovery targets vary by deployment. The activity log is retained until an operator applies a retention policy. The employee directory export records an audit event and accepts up to 10,000 rows. Narrow the filters for larger directories.
 
 ## Back up and upgrade
 
-Create a database dump from a trusted host. The dump includes employee data, password hashes, sessions, and the migration ledger. Protect it accordingly.
+Create a database dump from a trusted host. The dump includes employee data, pay history, uploaded documents, password hashes, sessions, and the migration ledger. Uploaded files are stored in the database, so size backups and disks for them. Protect it accordingly.
 
 ```sh
 umask 077
@@ -24,6 +24,14 @@ Before upgrading, back up the database, record the running revision, review the 
 
 ## Accounts
 
-Use an administrator account for employee and access changes, and give directory-only users the viewer role. Employee creation adds a record, and operators separately provision sign-in accounts. Operator-managed password resets and disabling a login revoke sessions. Keep the machine running the account CLI restricted to trusted operators.
+Administrators create accounts, reset passwords, change roles and link accounts to employee records in **Settings, Access**. Temporary passwords are shown once and must be replaced at first sign-in. Use the account CLI for the first administrator and for recovery. Password resets, role changes and disabling a login revoke sessions. Archiving an employee disables their linked account. Keep the machine running the account CLI restricted to trusted operators.
 
 App pages use a per-request Content Security Policy and prohibit shared caching. For replicated app servers, roll out the same built image to every replica so Server Actions use the same build and encryption key. [Next.js self-hosting guide](https://nextjs.org/docs/app/guides/self-hosting)
+
+## Keys and recovery
+
+Back up `OPENWARP_DATA_KEY` separately from the database. A restored database without its key can’t read bank details, identity data or two-factor secrets, and signature seals fail verification. If the key was never set, `BETTER_AUTH_SECRET` protects those values and must not be rotated.
+
+Recover an administrator who lost their authenticator with `docker compose run --rm migrate node scripts/account.mjs disable-two-factor --email …`. Activity is kept forever by default. To apply the retention set in **Settings, Security**, run `docker compose run --rm migrate node scripts/prune-activity.mjs`, review the count, and repeat with `--confirm`.
+
+Set `X-OpenWarp-Client-IP` at the reverse proxy. Sign-in limits, session lists and signature certificates use it. Background work runs in every replica and a database lock lets one of them act at a time.
