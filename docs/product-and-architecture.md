@@ -1,6 +1,6 @@
 # Product scope and architecture
 
-OpenWarp is an independent, single-company deployment for administrators who manage employee records and colleagues who need a readable work directory. The landing page pairs a WebGL digit field with workspace screenshots captured with sample data. The workspace uses the same color tokens, mark and segmented meters with denser layouts for day-to-day work. The field draws one still frame when reduced motion is requested, stops offscreen, has a pause control, and is absent when WebGL2 is unavailable. The theme cookie holds only `light` or `dark`.
+OpenWarp is an independent, single-company deployment for administrators who manage employee records and colleagues who need a readable work directory. The landing page pairs a WebGL digit field with workspace screenshots captured with sample data. The workspace uses the same color tokens, mark and segmented meters with denser layouts for day-to-day work. The field draws one still frame when reduced motion is requested, stops offscreen, and is absent when WebGL2 is unavailable. The sign-in frame offers a pause control; on the landing page the field is decorative and has none. The theme cookie holds only `light` or `dark`.
 
 ## Warp capability review
 

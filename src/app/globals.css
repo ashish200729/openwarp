@@ -34,6 +34,17 @@
   --danger: light-dark(#b92b23, #f58e86);
   --shadow-tint: light-dark(rgb(23 23 21 / 0.08), rgb(0 0 0 / 0.45));
   --shadow-deep: light-dark(rgb(23 23 21 / 0.16), rgb(0 0 0 / 0.6));
+  /* Command blocks stay dark in both themes. */
+  --term: light-dark(#161615, #0c0c0b);
+  --term-edge: light-dark(#161615, #2b2b29);
+  --term-line: #2a2a28;
+  --term-hover: #2a2a28;
+  --term-ink: #ecece8;
+  --term-muted: #a3a39d;
+  --term-key: #8cc4f8;
+  --term-sub: #e8b468;
+  --term-string: #93d6ab;
+  --term-ok: #6cc891;
 }
 
 @theme inline {
@@ -57,6 +68,16 @@
   --color-positive: var(--positive);
   --color-amber: var(--amber);
   --color-danger: var(--danger);
+  --color-term: var(--term);
+  --color-term-edge: var(--term-edge);
+  --color-term-line: var(--term-line);
+  --color-term-hover: var(--term-hover);
+  --color-term-ink: var(--term-ink);
+  --color-term-muted: var(--term-muted);
+  --color-term-key: var(--term-key);
+  --color-term-sub: var(--term-sub);
+  --color-term-string: var(--term-string);
+  --color-term-ok: var(--term-ok);
   --shadow-float: 0 1px 2px var(--shadow-tint), 0 10px 30px -10px var(--shadow-deep);
   --shadow-window: 0 1px 2px var(--shadow-tint), 0 24px 60px -28px var(--shadow-deep);
 }
@@ -84,4 +105,11 @@
 
 @layer components {
   .hero-field { mask-image: linear-gradient(#000 72%, transparent); }
+  .closing-field { mask-image: linear-gradient(transparent, #000 45%); }
+  /* The header button's edge pixels. Its fill is dark in the light theme and light in the dark theme. */
+  .pixel-edge {
+    color: var(--primary-ink);
+    caret-color: light-dark(#6fb8ff, #0a6fcf);
+    outline-color: light-dark(#ffb057, #c96400);
+  }
 }

@@ -3,6 +3,6 @@ export {
   ArchiveIcon, ArrowBendUpLeftIcon, ArrowLeftIcon, ArrowRightIcon, ArrowUpRightIcon, CalendarDotsIcon, CaretDownIcon, CaretLeftIcon, CaretRightIcon, ChartBarIcon,
   CheckCircleIcon, CheckIcon, ClockCounterClockwiseIcon, CopyIcon, DotsThreeIcon, DownloadSimpleIcon, FilesIcon, GearSixIcon, HouseIcon, ListChecksIcon, ListIcon,
   MagnifyingGlassIcon, MinusIcon, MoneyIcon, MoonIcon, PauseIcon, PencilSimpleIcon, PlayIcon, PlusIcon, ReceiptIcon, SignOutIcon, SunIcon, TreeStructureIcon,
-  UploadSimpleIcon, UserCircleIcon, UsersFourIcon, UsersThreeIcon, WarningCircleIcon, XIcon, CircleHalfIcon, CircleIcon, XCircleIcon,
+  UploadSimpleIcon, UserCircleIcon, GithubLogoIcon, DatabaseIcon, CodeIcon, HandCoinsIcon, UsersFourIcon, UsersThreeIcon, WarningCircleIcon, XIcon, CircleHalfIcon, CircleIcon, XCircleIcon,
 } from "@phosphor-icons/react/ssr";
 export type { Icon } from "@phosphor-icons/react";

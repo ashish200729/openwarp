@@ -1,8 +1,7 @@
-import Link from "next/link";
 import { Brand, repositoryUrl } from "@/components/brand";
 import { ThemeToggle } from "@/components/theme-toggle";
-import { primaryButton } from "@/components/ui";
-import { cn } from "@/lib/utils";
+import { PixelEdgeButton } from "./pixel-edge-button";
+import { HeaderFrame } from "./header-frame";
 import { MobileMenu } from "./mobile-menu";
 
 export const siteLinks = [
@@ -15,18 +14,18 @@ export const siteLinks = [
 
 export function SiteHeader() {
   return (
-    <header className="sticky top-0 z-30 border-b border-line bg-surface">
-      <div className="mx-auto flex min-h-14 max-w-[74rem] items-center justify-between gap-2 px-4 sm:px-8">
+    <HeaderFrame>
+      <div className="mx-auto flex h-full max-w-[74rem] items-center justify-between gap-2 px-4 sm:px-8">
         <Brand />
         <nav aria-label="Main navigation" className="hidden items-center gap-0.5 md:flex">
-          {siteLinks.map(({ label, href }) => <a key={href} href={href} className="inline-flex min-h-9 items-center rounded-[7px] px-3 text-sm text-muted hover:bg-raised hover:text-foreground">{label}</a>)}
+          {siteLinks.map(({ label, href }) => <a key={href} href={href} className="inline-flex min-h-9 items-center rounded-[7px] px-3 text-sm text-muted transition-colors hover:bg-raised hover:text-foreground motion-reduce:transition-none">{label}</a>)}
         </nav>
         <div className="flex items-center gap-1 sm:gap-2">
           <ThemeToggle />
-          <Link href="/get-started" className={cn(primaryButton, "hidden sm:inline-flex")}>Open workspace</Link>
+          <PixelEdgeButton href="/get-started" className="hidden sm:inline-flex">Open workspace</PixelEdgeButton>
           <MobileMenu links={siteLinks} />
         </div>
       </div>
-    </header>
+    </HeaderFrame>
   );
 }
