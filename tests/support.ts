@@ -17,7 +17,12 @@ export async function signIn(page: Page, email: string, password: string) {
 export async function checkPage(page: Page) {
   // Next.js streams the title after a client navigation.
   await expect(page).toHaveTitle(/OpenWarp/);
-  const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"]).analyze();
+  const scan = () => new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"]).analyze();
+  let results = await scan();
+  if (results.violations.length === 1 && results.violations[0].id === "document-title") {
+    await expect(page).toHaveTitle(/OpenWarp/);
+    results = await scan();
+  }
   expect(results.violations.map(({ id, nodes }) => ({ id, nodes: nodes.map((node) => node.target) }))).toEqual([]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(page.viewportSize()!.width);
 }

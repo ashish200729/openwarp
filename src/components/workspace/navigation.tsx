@@ -100,7 +100,7 @@ export function WorkspaceNavigation({ canManage, employeeId, counts }: { canMana
     <dialog ref={menu} aria-label="All pages" onClick={(event) => { if (event.target === event.currentTarget) event.currentTarget.close(); }} className="m-0 mt-auto max-h-[85dvh] w-full max-w-none rounded-t-2xl border-t border-line bg-surface text-foreground backdrop:bg-black/40 lg:hidden">
       <div className="p-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">
         <div className="mb-2 flex items-center justify-between"><p className="px-2.5 text-[15px] font-semibold">All pages</p><button type="button" onClick={() => menu.current?.close()} aria-label="Close" className="grid size-11 place-items-center rounded-[7px] text-muted"><XIcon aria-hidden="true" size={18} /></button></div>
-        <div className="grid gap-4">{sections.map((section, index) => <div key={section.title ?? index}>{section.title && <p className="px-2.5 pb-1 text-xs text-hint">{section.title}</p>}{section.links.map((link) => renderLink(link, true))}</div>)}</div>
+        <div className="grid gap-4" onClick={event => { if (event.target instanceof Element && event.target.closest("a[href]")) menu.current?.close(); }}>{sections.map((section, index) => <div key={section.title ?? index}>{section.title && <p className="px-2.5 pb-1 text-xs text-hint">{section.title}</p>}{section.links.map((link) => renderLink(link, true))}</div>)}</div>
       </div>
     </dialog>
   </>;

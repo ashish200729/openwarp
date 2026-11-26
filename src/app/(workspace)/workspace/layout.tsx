@@ -68,7 +68,7 @@ export default async function WorkspaceLayout({ children }: { children: ReactNod
         </header>
         <main id="main" tabIndex={-1} className="mx-auto max-w-[76rem] px-4 py-6 sm:px-7 sm:py-8 lg:px-10">{children}</main>
       </div>
-      <WorkspaceSearch canManage={canManage} />
+      <WorkspaceSearch canManage={canManage} linked={Boolean(member.employeeId)} />
     </div>
   );
 }

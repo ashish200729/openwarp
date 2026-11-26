@@ -9,23 +9,23 @@ const openEvent = "openwarp:search";
 
 type Result = { key: string; label: string; detail: string; href: string };
 
-const pages: (Result & { admin?: boolean })[] = [
+const pages: (Result & { admin?: boolean; audience?: "employee" | "employeeOrAdmin" })[] = [
   { key: "home", label: "Home", detail: "Page", href: "/workspace" }, { key: "people", label: "People", detail: "Page", href: "/workspace/people" },
   { key: "add", label: "Add employee", detail: "Action", href: "/workspace/people/new", admin: true }, { key: "import", label: "Import employees", detail: "Action", href: "/workspace/people/import", admin: true },
   { key: "org", label: "Org chart", detail: "Page", href: "/workspace/org" }, { key: "teams", label: "Teams", detail: "Page", href: "/workspace/teams" },
-  { key: "lifecycle", label: "Lifecycle", detail: "Page", href: "/workspace/lifecycle", admin: true }, { key: "request", label: "Request time off", detail: "Action", href: "/workspace/time-off?new=1" },
-  { key: "time-off", label: "Time off", detail: "Page", href: "/workspace/time-off" }, { key: "expense", label: "Submit an expense", detail: "Action", href: "/workspace/expenses?new=1" },
+  { key: "lifecycle", label: "Lifecycle", detail: "Page", href: "/workspace/lifecycle", admin: true }, { key: "request", audience: "employee", label: "Request time off", detail: "Action", href: "/workspace/time-off?new=1" },
+  { key: "time-off", label: "Time off", detail: "Page", href: "/workspace/time-off" }, { key: "expense", audience: "employee", label: "Submit an expense", detail: "Action", href: "/workspace/expenses?new=1" },
   { key: "expenses", label: "Expenses", detail: "Page", href: "/workspace/expenses" }, { key: "pay-runs", label: "Pay runs", detail: "Page", href: "/workspace/pay-runs", admin: true },
   { key: "timesheets", label: "Timesheets", detail: "Page", href: "/workspace/timesheets" }, { key: "schedule", label: "Schedule", detail: "Page", href: "/workspace/schedule" },
-  { key: "payslips", label: "Payslips", detail: "Page", href: "/workspace/payslips" }, { key: "benefits", label: "Benefits", detail: "Page", href: "/workspace/benefits" },
-  { key: "training", label: "Training", detail: "Page", href: "/workspace/training" }, { key: "devices", label: "Devices and apps", detail: "Page", href: "/workspace/devices" },
+  { key: "payslips", audience: "employee", label: "Payslips", detail: "Page", href: "/workspace/payslips" }, { key: "benefits", label: "Benefits", detail: "Page", href: "/workspace/benefits" },
+  { key: "training", label: "Training", detail: "Page", href: "/workspace/training" }, { key: "devices", audience: "employeeOrAdmin", label: "Devices and apps", detail: "Page", href: "/workspace/devices" },
   { key: "compliance", label: "Compliance", detail: "Page", href: "/workspace/compliance", admin: true }, { key: "routines", label: "Routines", detail: "Page", href: "/workspace/routines", admin: true },
   { key: "announcements", label: "Announcements", detail: "Page", href: "/workspace/announcements" }, { key: "signatures", label: "Signatures", detail: "Page", href: "/workspace/documents/signatures" }, { key: "invoices", label: "Invoices", detail: "Page", href: "/workspace/invoices" }, { key: "notifications", label: "Notifications", detail: "Page", href: "/workspace/notifications" }, { key: "documents", label: "Documents", detail: "Page", href: "/workspace/documents" }, { key: "reports", label: "Reports", detail: "Page", href: "/workspace/reports", admin: true },
   { key: "activity", label: "Activity", detail: "Page", href: "/workspace/activity", admin: true }, { key: "settings", label: "Settings", detail: "Page", href: "/workspace/settings", admin: true },
   { key: "access", label: "Access", detail: "Settings", href: "/workspace/settings/access", admin: true }, { key: "account", label: "My account", detail: "Page", href: "/workspace/account" },
 ];
 
-export function WorkspaceSearch({ canManage }: { canManage: boolean }) {
+export function WorkspaceSearch({ canManage, linked }: { canManage: boolean; linked: boolean }) {
   const router = useRouter();
   const dialog = useRef<HTMLDialogElement>(null);
   const listId = useId();
@@ -35,7 +35,7 @@ export function WorkspaceSearch({ canManage }: { canManage: boolean }) {
   const term = query.trim().toLowerCase();
   const results = [
     ...(found.query === term ? found.results : []),
-    ...pages.filter((page) => (canManage || !page.admin) && (!term || page.label.toLowerCase().includes(term))).slice(0, term ? 6 : 9),
+    ...pages.filter((page) => (canManage || !page.admin) && (!page.audience || linked || (page.audience === "employeeOrAdmin" && canManage)) && (!term || page.label.toLowerCase().includes(term))).slice(0, term ? 6 : 9),
   ];
   const current = Math.min(selected, results.length - 1);
 

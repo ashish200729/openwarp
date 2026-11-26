@@ -139,6 +139,14 @@ test("administrators manage a complete employee lifecycle and viewers see only a
     const viewerPage = await viewer.newPage();
     await signIn(viewerPage, viewerEmail, viewerPassword);
     await viewerPage.goto("/workspace/people");
+    await viewerPage.getByRole("button", { name: "More" }).click();
+    const more = viewerPage.getByRole("dialog");
+    await more.getByRole("link", { name: "People", exact: true }).click();
+    await expect(more).toBeHidden();
+    await viewerPage.getByRole("button", { name: "Open search" }).click();
+    await viewerPage.getByRole("combobox").fill("Request time off");
+    await expect(viewerPage.getByText("Nothing matches that.")).toBeVisible();
+    await viewerPage.keyboard.press("Escape");
     await expect(viewerPage.getByRole("link", { name: /Morgan Reed/ })).toBeVisible();
     await expect(viewerPage.getByText("Taylor Park", { exact: true })).toHaveCount(0);
     await expect(viewerPage.getByRole("link", { name: "Add employee" })).toHaveCount(0);

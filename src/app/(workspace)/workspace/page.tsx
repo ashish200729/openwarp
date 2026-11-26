@@ -52,7 +52,7 @@ export default async function HomePage() {
     ...expenses.map((expense) => ({ key: expense.id, href: "/workspace/expenses", title: `${expense.employeeName} submitted ${expense.merchant}`, detail: formatDate(expense.spentOn), meta: formatMoney(expense.amountCents, expense.currency) })),
     ...(workflows?.workflows ?? []).map((workflow) => ({ key: workflow.id, href: `/workspace/people/${workflow.employeeId}#checklist`, title: `${workflow.kind === "onboarding" ? "Onboard" : "Offboard"} ${workflow.employeeName}`, detail: `${workflow.kind === "onboarding" ? "Starts" : "Last day"} ${formatDate(workflow.targetDate)}`, meta: `${workflow.completed} of ${workflow.total}` })),
     ...modules,
-  ].slice(0, 12);
+  ];
 
   const figures: ReactNode = canManage ? <>
     <Figure label="People" value={count("active") + count("onboarding") + count("offboarding")} href="/workspace/people" />
@@ -72,7 +72,7 @@ export default async function HomePage() {
     <FigureRow>{figures}</FigureRow>
     {announcements.length > 0 && <Section title="Announcements" className="mb-9" action={<Link href="/workspace/announcements" className={`${textLink} text-[13px]`}>All announcements</Link>}><ul className="divide-y divide-line">{announcements.map((entry) => <li key={entry.id}><Link href="/workspace/announcements" className="group flex items-baseline justify-between gap-4 py-2.5 text-sm"><span className="font-medium wrap-anywhere group-hover:underline">{entry.title}</span><span className="shrink-0 text-[13px] text-muted">{entry.needsAcknowledgement && !entry.acknowledged ? "Needs your acknowledgement" : formatDate(entry.publishOn)}</span></Link></li>)}</ul></Section>}
     <div className="grid gap-x-12 gap-y-9 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
-      {(decides || member.employeeId) && <Section title="To do">{todos.length ? <TodoList items={todos} /> : <Empty>Nothing is waiting on you.</Empty>}</Section>}
+      {(decides || member.employeeId) && <Section title="To do">{todos.length ? <><TodoList items={todos.slice(0, 12)} />{todos.length > 12 && <details className="border-t border-line"><summary className="inline-flex min-h-11 items-center rounded text-sm font-medium text-accent">More tasks ({todos.length - 12})</summary><TodoList items={todos.slice(12)} /></details>}</> : <Empty>Nothing is waiting on you.</Empty>}</Section>}
       <div className="grid content-start gap-9">
         {headcount && <Section title="Headcount, last 12 months" action={<Link href="/workspace/reports" className={`${textLink} text-[13px]`}>Reports</Link>}><div className="pt-4"><HeadcountColumns data={headcount} label="Headcount at the end of each month." /></div></Section>}
         <Section title="Away in the next two weeks" action={<Link href="/workspace/time-off" className={`${textLink} text-[13px]`}>Calendar</Link>}>
