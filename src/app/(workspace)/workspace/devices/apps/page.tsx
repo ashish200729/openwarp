@@ -9,7 +9,7 @@ import { DataTable, ExportLink, StatusText } from "@/components/workspace/workpl
 import { billingLabels, criticalityLabels } from "@/lib/domains/workplace";
 import { addDays, formatMoney, today } from "@/lib/operations";
 import { formatDate } from "@/lib/people";
-import { annualCost, appChoices, listApps, ownGrants, pendingGrants, type AppRow } from "@/lib/server/devices";
+import { canRequestEquipment, annualCost, appChoices, listApps, ownGrants, pendingGrants, type AppRow } from "@/lib/server/devices";
 import { requireMember } from "@/lib/server/member";
 import { readCompany } from "@/lib/server/settings";
 import { assignTargets } from "@/lib/server/training";
@@ -43,7 +43,8 @@ export default async function AppsPage({ searchParams }: { searchParams: Promise
   const query = await searchParams;
   const admin = member.role === "admin";
   const decides = admin || member.managesPeople;
-  const requesting = query.request === "1" && Boolean(member.employeeId);
+  const canRequest = await canRequestEquipment(member.employeeId);
+  const requesting = query.request === "1" && canRequest;
   const [apps, pending, own, choices] = await Promise.all([listApps(member), pendingGrants(member), ownGrants(member), requesting ? appChoices() : []]);
   const notice = query.saved && Object.hasOwn(notices, query.saved) ? notices[query.saved] : undefined;
   return <>
@@ -55,7 +56,7 @@ export default async function AppsPage({ searchParams }: { searchParams: Promise
     </ActionForm> : <Empty>No apps are in the register yet.</Empty>}</section>}
     {decides && <Section title="Waiting" className="mb-9">{pending.length ? <GrantList grants={pending} mode="decide" /> : <Empty>No access requests are waiting.</Empty>}</Section>}
     {admin && <Register apps={apps} adding={query.new === "1"} />}
-    {member.employeeId ? <Section title="My access" action={!requesting && <Link href="/workspace/devices/apps?request=1" className={`${textLink} text-[13px]`}>Request access</Link>}>{own.length ? <GrantList grants={own} mode="own" /> : <Empty>No app access is recorded for you.</Empty>}</Section>
+    {member.employeeId ? <Section title="My access" action={canRequest && !requesting && <Link href="/workspace/devices/apps?request=1" className={`${textLink} text-[13px]`}>Request access</Link>}>{own.length ? <GrantList grants={own} mode="own" /> : <Empty>No app access is recorded for you.</Empty>}</Section>
       : !admin && <Empty>Your account isn’t linked to an employee record, so no access can be recorded for you.</Empty>}
   </>;
 }

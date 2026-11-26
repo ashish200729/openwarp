@@ -27,12 +27,13 @@ export default async function EmployeeBenefitsPage({ params, searchParams }: { p
   const day = today();
   const own = member.employeeId === employee.id;
   const past = (end: string | null) => end !== null && end < day;
+  const canEnroll = person && person.status !== "offboarding" && person.hireDate <= today();
   return <>
     <ProfileHeader employee={employee} current="benefits" canSeePrivate />
     {query.saved === "event" && <Notice>{canManage ? "Enrollment opened for 30 days." : "Sent to an administrator for review."}</Notice>}
     {query.saved === "dependent" && <Notice>Dependent added.</Notice>}
     {window && choices.length > 0 && <Callout><span className="font-medium">Enrollment is open until {formatDate(window.closesOn)}: {window.name}.</span> Choose or waive each type below. An administrator approves each choice. Deductions start with the next regular run in the coverage, and earlier periods aren’t charged.</Callout>}
-    {query.add === "event" && person && !requested && <section className={`${panelStyle} mb-8 max-w-2xl p-5`}><h2 className="mb-4 text-[15px] font-semibold">Report a life event</h2>
+    {query.add === "event" && canEnroll && !requested && <section className={`${panelStyle} mb-8 max-w-2xl p-5`}><h2 className="mb-4 text-[15px] font-semibold">Report a life event</h2>
       <ActionForm action={reportEventAction} submit={canManage ? "Open enrollment" : "Send for review"} hidden={{ employeeId: employee.id }} secondary={<Link href={base} className={textButton}>Close</Link>}>
         <div className="grid gap-4 sm:grid-cols-2"><Field name="name" label="Event" required options={lifeEvents.map((value) => ({ value, label: value }))} /><Field name="eventOn" label="Event date" type="date" required defaultValue={day} /></div>
         <p className="text-[13px] text-muted">Report it within 60 days. Enrollment opens for 30 days, with coverage from the event date.</p>
@@ -47,12 +48,12 @@ export default async function EmployeeBenefitsPage({ params, searchParams }: { p
             <ActionForm key={chosen?.id ?? "new"} action={submitElectionAction} submit="Send for approval" pending="Sending…" hidden={{ employeeId: employee.id, planKind: kind }} variant="secondary" className="pb-5">
               <Field name="choice" label={`${planKindLabels[kind]} plan`} required defaultValue={chosen ? chosen.planId ? `${chosen.planId}:${chosen.tier}` : "waive" : "waive"} options={[{ value: "waive", label: "Waive" }, ...options.map((option) => ({ value: option.value, label: `${option.plan.name}, ${tierLabels[option.rate.tier].toLowerCase()}: ${rateText(option.plan, option.rate, company.currency)}` }))]} />
               {contribution && <Field name="contribution" label={contribution.plan.percent ? "Your percent of pay" : `Your monthly amount in ${company.currency}`} inputMode="decimal" defaultValue={chosen?.chosenBp !== null && chosen?.chosenBp !== undefined ? String(chosen.chosenBp / 100) : chosen?.chosenCents !== null && chosen?.chosenCents !== undefined ? (chosen.chosenCents / 100).toFixed(2) : ""} />}
-              {dependents.length > 0 && options.some((option) => option.rate.tier !== "employee") && <fieldset className="min-w-0"><legend className="mb-2 text-sm font-medium">Dependents to cover</legend><div className="grid gap-2.5 sm:grid-cols-2">{dependents.map((dependent) => <Checkbox key={dependent.id} name={`dependent-${dependent.id}`} label={dependent.name} hint={relationshipLabels[dependent.relationship]} />)}</div></fieldset>}
+              {dependents.length > 0 && options.some((option) => option.rate.tier !== "employee") && <fieldset className="min-w-0"><legend className="mb-2 text-sm font-medium">Dependents to cover</legend><div className="grid gap-2.5 sm:grid-cols-2">{dependents.map((dependent) => <Checkbox key={dependent.id} name={`dependent-${dependent.id}`} defaultChecked={chosen?.dependentIds.includes(dependent.id)} label={dependent.name} hint={relationshipLabels[dependent.relationship]} />)}</div></fieldset>}
               <div className="grid gap-1 text-[13px] leading-relaxed text-muted">{[...new Map(options.map((option) => [option.plan.id, option])).values()].map(({ plan, coverageStart }) => <p key={plan.id} className="wrap-anywhere"><span className="font-medium text-foreground">{plan.name}.</span> Coverage from {formatDate(coverageStart)}, {plan.preTax ? "before tax" : "after tax"}. {plan.description} {plan.documentId && plan.documentName && <a href={`/workspace/documents/${plan.documentId}`} className="text-accent underline underline-offset-3">{plan.documentName}</a>}</p>)}</div>
             </ActionForm>
           </details></li>;
         })}</ul></Section>}
-        <Section title="Choices and coverage" action={person && !requested && query.add !== "event" && <Link href={`${base}?add=event`} className={`${textLink} text-[13px]`}>{canManage && !own ? "Open enrollment for a life event" : "Report a life event"}</Link>}>
+        <Section title="Choices and coverage" action={canEnroll && !requested && query.add !== "event" && <Link href={`${base}?add=event`} className={`${textLink} text-[13px]`}>{canManage && !own ? "Open enrollment for a life event" : "Report a life event"}</Link>}>
           {requested && <p className="py-3 text-sm text-amber">A life event is waiting for an administrator’s review.</p>}
           {elections.length ? <ul className="divide-y divide-line">{elections.map((election) => <li key={election.id} className="py-3 text-sm">
             <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2"><div className="min-w-0"><p className="font-medium wrap-anywhere">{electionText(election, company.currency)}</p><p className="text-muted">From {formatDate(election.coverageStart)}{election.coverageEnd && ` to ${formatDate(election.coverageEnd)}`}</p>{election.dependents.length > 0 && <p className="wrap-anywhere text-muted">Covers {election.dependents.join(", ")}</p>}</div>

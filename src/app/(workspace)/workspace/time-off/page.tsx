@@ -77,7 +77,12 @@ export default async function TimeOffPage({ searchParams }: { searchParams: Prom
             return <td key={date} className={cn("h-24 border border-line p-1.5 align-top", (index > 4 || holiday) && "bg-background")}>
               <span className={cn("inline-grid size-6 place-items-center rounded-full tabular-nums", date === day ? "bg-primary font-semibold text-primary-ink" : date.startsWith(month) ? "" : "text-hint")}>{Number(date.slice(8))}</span>
               {holiday && <span className="mt-0.5 block text-xs font-medium wrap-anywhere text-amber">{holiday}</span>}
-              {index < 5 && !holiday && <>{away.slice(0, 2).map((absence) => <Link key={absence.employeeId} href={`/workspace/people/${absence.employeeId}`} title={absence.name} className="mt-0.5 block truncate rounded bg-signal/12 px-1.5 text-xs leading-6 text-foreground hover:bg-signal/20">{absence.name}</Link>)}
+              {index < 5 && !holiday && <>{away.slice(0, 2).map(absence => {
+                const style = "mt-0.5 block truncate rounded bg-signal/12 px-1.5 text-xs leading-6 text-foreground";
+                return absence.active || member.role === "admin" || absence.employeeId === member.employeeId
+                  ? <Link key={absence.employeeId} href={`/workspace/people/${absence.employeeId}`} title={absence.name} className={cn(style, "hover:bg-signal/20")}>{absence.name}</Link>
+                  : <span key={absence.employeeId} className={style} title={absence.name}>{absence.name}</span>;
+              })}
                 {away.length > 2 && <span className="mt-0.5 block px-1.5 text-xs text-muted">{away.length - 2} more</span>}</>}
             </td>;
           })}

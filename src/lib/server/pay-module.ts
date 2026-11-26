@@ -39,10 +39,11 @@ export async function draftRunBlockers(client: PoolClient, employeeId: string): 
 }
 
 export async function archiveBlockers(client: PoolClient, employeeId: string): Promise<string[]> {
-  const { rows: [open] } = await client.query<{ expenses: boolean; invoices: boolean }>(
-    `SELECT EXISTS (SELECT 1 FROM expenses WHERE employee_id = $1 AND state = 'approved') AS expenses, EXISTS (SELECT 1 FROM contractor_invoices WHERE employee_id = $1 AND state = 'approved') AS invoices`, [employeeId]);
+  const { rows: [open] } = await client.query<{ expenses: boolean; pendingExpenses: boolean; invoices: boolean }>(
+    `SELECT EXISTS (SELECT 1 FROM expenses WHERE employee_id = $1 AND state = 'approved') AS expenses, EXISTS (SELECT 1 FROM expenses WHERE employee_id=$1 AND state='pending') AS "pendingExpenses", EXISTS (SELECT 1 FROM contractor_invoices WHERE employee_id = $1 AND state = 'approved') AS invoices`, [employeeId]);
   return [
     ...await draftRunBlockers(client, employeeId),
+    ...(open.pendingExpenses ? ["Decide this employee’s pending expenses before archiving their profile."] : []),
     ...(open.expenses ? ["They have an approved expense that hasn’t been reimbursed."] : []),
     ...(open.invoices ? ["They have an approved invoice that hasn’t been paid."] : []),
   ];

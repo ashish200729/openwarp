@@ -3,7 +3,8 @@ import type { PoolClient } from "pg";
 import { statusLabels, type EmployeeFilters, type EmployeeInput, type EmployeeStatus, type WorkflowKind } from "@/lib/people";
 import { employeeColumns, employeeFilterValues, employeeFrom, employeeOrder, employeeWhere, type Employee } from "./directory";
 import type { Member } from "./member";
-import { archiveBlockers, onOffboarding, onOnboarding } from "./modules";
+import { syncDepartureCoverage } from "./benefits";
+import { afterArchive, archiveBlockers, onOffboarding, onOnboarding } from "./modules";
 import { audit, ensureCurrentTeam, PeopleError, runAsAdmin } from "./write";
 
 export { PeopleError };
@@ -92,6 +93,13 @@ export function updateEmployee(member: Member, input: EmployeeInput & { id: stri
       `UPDATE employees SET first_name = $1, last_name = $2, email = $3, title = $4, team_id = $5, manager_id = $6, employment_type = $7,
        hire_date = $8, location = $9, last_day = $10, version = version + 1, updated_at = now() WHERE id = $11`, [...employeeValues(input), lastDay, input.id],
     );
+    if (employee.status === "offboarding" && lastDay !== employee.lastDay) {
+      await syncDepartureCoverage(client, member, input.id, false);
+      await client.query(
+        `UPDATE workflow_tasks t SET due_on=$2 FROM employee_workflows w WHERE t.workflow_id=w.id AND w.employee_id=$1
+         AND w.kind='offboarding' AND w.state='open' AND t.area IN ('app','device') AND t.completed_at IS NULL AND t.due_on IS NOT DISTINCT FROM $3::date`, [input.id, lastDay, employee.lastDay],
+      );
+    }
     await recordJob(client, input.id);
     await audit(client, member, "employee.updated", { employeeId: input.id });
   });
@@ -158,12 +166,16 @@ export function closeWorkflow(member: Member, input: { id: string; workflowId: s
       const blockers = await archiveBlockers(client, input.id);
       if (blockers.length) throw new PeopleError(blockers.join(" "));
     }
-    if (archive) await revokeAccess(client, member, input.id);
+    if (archive) {
+      await revokeAccess(client, member, input.id);
+      await afterArchive(client, member, input.id);
+    }
     await client.query("UPDATE employee_workflows SET state = $2, closed_at = now() WHERE id = $1", [input.workflowId, complete ? "completed" : "cancelled"]);
     await client.query(
       `UPDATE employees SET status = $2, last_day = CASE WHEN $2 = 'archived' THEN last_day ELSE NULL END,
        version = version + 1, updated_at = now() WHERE id = $1`, [input.id, archive ? "archived" : "active"],
     );
+    if (kind === "offboarding" && !complete) await syncDepartureCoverage(client, member, input.id, true);
     await audit(client, member, complete ? "workflow.completed" : "workflow.cancelled", { employeeId: input.id, detail: statusLabels[kind] });
   });
 }
@@ -173,6 +185,8 @@ export function rehireEmployee(member: Member, input: { id: string; version: num
     const employee = await currentEmployee(client, input.id, input.version);
     if (employee.status !== "archived") throw new PeopleError("Only archived profiles can start a new onboarding checklist.");
     if (employee.lastDay && input.hireDate < employee.lastDay) throw new PeopleError("The new start date must be on or after the previous last day.");
+    // Close outstanding work left by installations that archived the previous employment before these hooks existed.
+    await afterArchive(client, member, input.id);
     await client.query(
       `UPDATE employees SET status = 'onboarding', hire_date = $2, last_day = NULL, manager_id = NULL,
        team_id = (SELECT id FROM teams WHERE id = employees.team_id AND archived_at IS NULL),

@@ -1,3 +1,4 @@
+import { audit } from "./write";
 import "server-only";
 import type { PoolClient } from "pg";
 import { deviceKindLabels } from "@/lib/domains/workplace";
@@ -5,7 +6,7 @@ import { formatDate } from "@/lib/people";
 import { ownTasks } from "./checklists";
 import { complianceTodos } from "./compliance";
 import { pool, transaction } from "./db";
-import { closeWorkplace, openDeviceRequests, ownDevices, pendingGrants, setUpWorkplace, upcomingRenewals, workplaceBlockers } from "./devices";
+import { closeEquipmentRequests, closeWorkplace, openDeviceRequests, ownDevices, pendingGrants, setUpWorkplace, upcomingRenewals, workplaceBlockers } from "./devices";
 import type { Member } from "./member";
 import type { Todo } from "./modules";
 import { assignForNewHire, ownTraining } from "./training";
@@ -82,4 +83,12 @@ export async function sendReminders() {
   } catch (error) {
     console.error("OpenWarp could not send reminders", error instanceof Error ? error.name : "unknown");
   }
+}
+
+export async function afterArchive(client: PoolClient, member: Member, employeeId: string) {
+  await closeEquipmentRequests(client, member, employeeId);
+  const { rows } = await client.query<{ title: string }>(
+    `UPDATE training_assignments a SET state='cancelled' FROM courses c WHERE a.employee_id=$1 AND a.course_id=c.id AND a.state='open' RETURNING c.title`, [employeeId],
+  );
+  for (const row of rows) await audit(client, member, "training.cancelled", { employeeId, detail: row.title });
 }

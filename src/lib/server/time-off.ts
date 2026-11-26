@@ -15,7 +15,7 @@ export type TimeOffRequest = {
   id: string; employeeId: string; employeeName: string; typeName: string; startsOn: string; endsOn: string; days: number;
   halfDay: boolean; note: string; state: RequestState; decidedBy: string | null;
 };
-export type Absence = { employeeId: string; name: string; startsOn: string; endsOn: string };
+export type Absence = { active: boolean; employeeId: string; name: string; startsOn: string; endsOn: string };
 export type Balance = { typeId: string; name: string; allowance: number | null; used: number; pending: number; booked: number };
 
 const columns = `r.id, r.employee_id AS "employeeId", concat_ws(' ', e.first_name, e.last_name) AS "employeeName", t.name AS "typeName",
@@ -206,13 +206,11 @@ export async function timeOffBalances(employeeId: string, year: number) {
 }
 
 // The shared calendar shows that someone is away. The type and note stay with the employee and their deciders.
-// Anyone still on the books counts, including people working out their notice: leave can only be booked
-// inside their employment dates, so only archived records drop out.
 export async function listAbsences(start: string, end: string) {
   const { rows } = await pool().query<Absence>(
-    `SELECT e.id AS "employeeId", concat_ws(' ', e.first_name, e.last_name) AS name, to_char(r.starts_on, 'YYYY-MM-DD') AS "startsOn", to_char(r.ends_on, 'YYYY-MM-DD') AS "endsOn"
+    `SELECT e.status='active' AS active, e.id AS "employeeId", concat_ws(' ', e.first_name, e.last_name) AS name, to_char(greatest(r.starts_on, e.hire_date), 'YYYY-MM-DD') AS "startsOn", to_char(least(r.ends_on, e.last_day), 'YYYY-MM-DD') AS "endsOn"
      FROM time_off_requests r JOIN employees e ON e.id = r.employee_id
-     WHERE r.state = 'approved' AND e.status <> 'archived' AND r.starts_on <= $2 AND r.ends_on >= $1 ORDER BY r.starts_on, lower(e.last_name), e.id LIMIT 300`, [start, end],
+     WHERE r.state = 'approved' AND e.status <> 'archived' AND greatest(r.starts_on, e.hire_date) <= $2 AND least(r.ends_on, e.last_day) >= greatest(r.starts_on, e.hire_date, $1::date) ORDER BY r.starts_on, lower(e.last_name), e.id LIMIT 300`, [start, end],
   );
   return rows;
 }

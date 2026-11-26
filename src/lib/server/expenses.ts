@@ -55,7 +55,7 @@ export async function ownExpenses(member: Member) {
 
 export async function pendingExpenses(member: Member) {
   const { rows } = await pool().query<Expense>(
-    `SELECT ${columns} ${from} WHERE x.state = 'pending' AND e.status <> 'archived' AND ($1 = 'admin' OR e.manager_id = $2) ORDER BY x.created_at, x.id LIMIT 60`, [member.role, member.employeeId],
+    `SELECT ${columns} ${from} WHERE x.state = 'pending' AND (e.status <> 'archived' OR $1 = 'admin') AND ($1 = 'admin' OR e.manager_id = $2) ORDER BY x.created_at, x.id LIMIT 60`, [member.role, member.employeeId],
   );
   return rows;
 }

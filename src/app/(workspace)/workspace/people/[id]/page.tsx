@@ -47,7 +47,7 @@ export default async function EmployeePage({ params, searchParams }: { params: P
       {employee.status === "active" && <Link href={`/workspace/people/${id}/offboard`} className={secondaryButton}>Start offboarding</Link>}
       {employee.status === "archived" && <Link href={`/workspace/people/${id}/rehire`} className={primaryButton}>Restart onboarding</Link>}
     </>} />
-    {notice && <Notice>{notice}</Notice>}
+    {notice && <Notice>{notice}{saved === "rehired" && <> Review the employee’s sign-in before sharing their onboarding checklist. <Link href={`/workspace/settings/access?employee=${id}`} className="underline">Manage account access</Link></>}</Notice>}
     <div className="grid gap-x-12 gap-y-9 lg:grid-cols-[minmax(0,1.16fr)_minmax(0,1fr)]">
       <section className="min-w-0">
         <h2 className="border-b border-line pb-2 text-[15px] font-semibold">Work details</h2>
@@ -56,7 +56,7 @@ export default async function EmployeePage({ params, searchParams }: { params: P
           <Detail label="Employment type">{employmentLabels[employee.employmentType]}</Detail>
           <Detail label="Start date"><time dateTime={employee.hireDate}>{formatDate(employee.hireDate)}</time></Detail>
           <Detail label="Location">{employee.location || "Unspecified"}</Detail>
-          <Detail label="Team">{employee.teamName ? <Link className="text-accent underline-offset-4 hover:underline" href={`/workspace/people?team=${employee.teamId}`}>{employee.teamName}</Link> : "No team"}</Detail>
+          <Detail label="Team">{employee.status === "archived" ? employee.teamName || "No team" : employee.teamName ? <Link className="text-accent underline-offset-4 hover:underline" href={`/workspace/people?team=${employee.teamId}`}>{employee.teamName}</Link> : "No team"}</Detail>
           {custom.map((field) => <Detail key={field.id} label={field.label}>{formatCustomValue(field)}</Detail>)}
           {employee.lastDay && <Detail label="Last day"><time dateTime={employee.lastDay}>{formatDate(employee.lastDay)}</time></Detail>}
         </dl>

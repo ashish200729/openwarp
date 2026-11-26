@@ -27,10 +27,14 @@ export async function todos(member: Member): Promise<Todo[]> {
 /* eslint-disable-next-line @typescript-eslint/no-unused-vars */
 export async function onOnboarding(client: PoolClient, member: Member, employeeId: string): Promise<void> {}
 
-// Nobody can work a shift after their last day.
-export async function onOffboarding(client: PoolClient, member: Member, employeeId: string): Promise<void> {
-  const { rowCount } = await client.query("DELETE FROM shifts s USING employees e WHERE e.id = s.employee_id AND e.id = $1 AND s.day > e.last_day", [employeeId]);
-  if (rowCount) await audit(client, member, "shift.deleted", { employeeId, detail: `${rowCount} after the last day` });
+// Keep shifts until the departure is final. The schedule applies the current last day on read.
+export async function afterArchive(client: PoolClient, member: Member, employeeId: string) {
+  const { rowCount } = await client.query(
+    `DELETE FROM shifts s USING employees e WHERE e.id=s.employee_id AND e.id=$1
+     AND ((e.last_day IS NULL AND s.day >= greatest(e.hire_date, current_date)) OR
+       (s.day+s.ends_at+CASE WHEN s.ends_at<=s.starts_at THEN interval '1 day' ELSE interval '0' END) > e.last_day + interval '1 day')`, [employeeId],
+  );
+  if (rowCount) await audit(client, member, "shift.deleted", { employeeId, detail: `${rowCount} outside employment` });
 }
 
 export async function archiveBlockers(client: PoolClient, employeeId: string): Promise<string[]> {

@@ -8,7 +8,7 @@ import { DeviceForm, deviceName, DeviceState, OwnDevices } from "@/components/wo
 import { DataTable, Filters } from "@/components/workspace/workplace-parts";
 import { deviceKindLabels, deviceKinds, deviceStatuses, deviceStatusLabels } from "@/lib/domains/workplace";
 import { formatDate } from "@/lib/people";
-import { deviceFilters, deviceSummary, listDevices, openDeviceRequests, ownDeviceRequests, ownDevices, pendingGrants, type DeviceFilters } from "@/lib/server/devices";
+import { canRequestEquipment, deviceFilters, deviceSummary, listDevices, openDeviceRequests, ownDeviceRequests, ownDevices, pendingGrants, type DeviceFilters } from "@/lib/server/devices";
 import { requireMember, type Member } from "@/lib/server/member";
 import { readCompany } from "@/lib/server/settings";
 import { deviceRequestAction, requestDeviceAction } from "./actions";
@@ -65,7 +65,8 @@ export default async function DevicesPage({ searchParams }: { searchParams: Prom
   const query = await searchParams;
   const admin = member.role === "admin";
   const filters = deviceFilters(query);
-  const requesting = query.request === "1" && Boolean(member.employeeId);
+  const canRequest = await canRequestEquipment(member.employeeId);
+  const requesting = query.request === "1" && canRequest;
   const imported = admin && /^\d{1,4}$/.test(query.imported ?? "") ? Number(query.imported) : 0;
   const [own, requests, grants] = await Promise.all([ownDevices(member), ownDeviceRequests(member), pendingGrants(member)]);
   return <>
@@ -85,7 +86,7 @@ export default async function DevicesPage({ searchParams }: { searchParams: Prom
         <ActionForm action={requestDeviceAction} submit="Send request" pending="Sending…" secondary={<Link href="/workspace/devices" className={textButton}>Close</Link>}>
           <Field name="kind" label="Type" required options={deviceKinds.map((value) => ({ value, label: deviceKindLabels[value] }))} /><Field name="note" label="What do you need it for?" multiline maxLength={500} />
         </ActionForm></section>}
-      <Section title="My devices" className="mb-9" action={!requesting && <Link href="/workspace/devices?request=1" className={`${textLink} text-[13px]`}>Request a device</Link>}>{own.length ? <OwnDevices devices={own} /> : <Empty>No devices are assigned to you.</Empty>}</Section>
+      <Section title="My devices" className="mb-9" action={canRequest && !requesting && <Link href="/workspace/devices?request=1" className={`${textLink} text-[13px]`}>Request a device</Link>}>{own.length ? <OwnDevices devices={own} /> : <Empty>No devices are assigned to you.</Empty>}</Section>
       {requests.length > 0 && <Section title="My requests"><ul className="divide-y divide-line">{requests.map((request) => <li key={request.id} className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 py-3 text-sm"><div className="min-w-0"><p className="font-medium">{deviceKindLabels[request.kind]}</p><p className="text-[13px] text-muted">Asked {formatDate(request.createdAt)}</p></div>
         <div className="flex items-center gap-3"><span className="text-[13px] text-muted">{requestStates[request.state]}</span>{request.state === "open" && <ActionButtons action={deviceRequestAction} hidden={{ id: request.id }} name="operation" buttons={[{ value: "cancelled", label: "Cancel", describe: `Cancel ${deviceKindLabels[request.kind].toLowerCase()} request`, variant: "text", confirm: { title: "Cancel this request?", body: "You can ask again later.", action: "Cancel request", danger: true } }]} />}</div></li>)}</ul></Section>}
     </>}

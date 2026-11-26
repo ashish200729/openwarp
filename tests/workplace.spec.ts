@@ -321,6 +321,19 @@ test("devices, app access, training, compliance, reports and checklists follow e
     await page.goto(`${ivo}/offboard`);
     await page.getByLabel("Last day").fill(`${year}-06-30`);
     await page.getByRole("button", { name: "Start offboarding" }).click();
+    await expect(page.getByRole("heading", { name: "Offboarding checklist" })).toBeVisible();
+    await ivoPage.goto("/workspace/devices?request=1");
+    await expect(ivoPage.getByRole("heading", { name: "Request a device" })).toHaveCount(0);
+    await ivoPage.goto("/workspace/devices/apps?request=1");
+    await expect(ivoPage.getByRole("heading", { name: "Request app access" })).toHaveCount(0);
+    await page.getByRole("button", { name: "Cancel offboarding", exact: true }).click();
+    await page.getByRole("button", { name: "Return to active" }).click();
+    await expect(page.getByRole("link", { name: "Start offboarding" })).toBeVisible();
+    await ivoPage.goto("/workspace/devices?request=1");
+    await expect(ivoPage.getByRole("heading", { name: "Request a device" })).toBeVisible();
+    await page.goto(`${ivo}/offboard`);
+    await page.getByLabel("Last day").fill(`${year}-06-30`);
+    await page.getByRole("button", { name: "Start offboarding" }).click();
     const buttons = page.locator("#checklist").getByRole("button", { name: /^Complete / });
     await expect(page.getByRole("button", { name: "Complete Collect laptop WP-100" })).toBeVisible();
     for (let left = await buttons.count(); left > 0; left -= 1) {

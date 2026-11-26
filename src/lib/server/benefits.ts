@@ -20,7 +20,7 @@ export type Plan = {
 export type EnrollmentWindow = { id: string; employeeId: string | null; employeeName: string | null; name: string; state: "requested" | "open" | "declined"; eventOn: string | null; opensOn: string; closesOn: string; coverageOn: string };
 export type Election = {
   id: string; employeeId: string; employeeName: string; planKind: PlanKind; planId: string | null; planName: string | null; tier: Tier | null; chosenCents: number | null; chosenBp: number | null; state: ElectionState;
-  coverageStart: string; coverageEnd: string | null; decidedBy: string | null; dependents: string[];
+  coverageStart: string; coverageEnd: string | null; decidedBy: string | null; dependents: string[]; dependentIds: string[];
 };
 export type Dependent = { id: string; name: string; relationship: "spouse" | "child"; born: string; covered: boolean };
 export type Notice = { id: string; employeeId: string; employeeName: string; status: string; lastDay: string | null; mismatch: boolean };
@@ -34,7 +34,8 @@ const planSelect = `SELECT p.id, p.name, p.kind, p.description, p.percent, p.pre
 const planOrder = `ORDER BY NOT p.active, array_position($1::text[], p.kind), lower(p.name), p.id`;
 const electionSelect = `SELECT x.id, x.employee_id AS "employeeId", concat_ws(' ', e.first_name, e.last_name) AS "employeeName", x.plan_kind AS "planKind", x.plan_id AS "planId", p.name AS "planName", x.tier, x.chosen_cents::float8 AS "chosenCents", x.chosen_bp AS "chosenBp",
   x.state, to_char(x.coverage_start, 'YYYY-MM-DD') AS "coverageStart", to_char(x.coverage_end, 'YYYY-MM-DD') AS "coverageEnd", u.name AS "decidedBy",
-  (SELECT coalesce(json_agg(d.name ORDER BY d.name), '[]') FROM benefit_election_dependents c JOIN dependents d ON d.id = c.dependent_id WHERE c.election_id = x.id) AS dependents
+  (SELECT coalesce(json_agg(d.name ORDER BY d.name), '[]') FROM benefit_election_dependents c JOIN dependents d ON d.id = c.dependent_id WHERE c.election_id = x.id) AS dependents,
+  ARRAY(SELECT link.dependent_id FROM benefit_election_dependents link WHERE link.election_id=x.id) AS "dependentIds"
   FROM benefit_elections x JOIN employees e ON e.id = x.employee_id LEFT JOIN benefit_plans p ON p.id = x.plan_id LEFT JOIN "user" u ON u.id = x.decided_by`;
 const windowSelect = `SELECT w.id, w.employee_id AS "employeeId", concat_ws(' ', e.first_name, e.last_name) AS "employeeName", w.name, w.state, to_char(w.event_on, 'YYYY-MM-DD') AS "eventOn", to_char(w.opens_on, 'YYYY-MM-DD') AS "opensOn",
   to_char(w.closes_on, 'YYYY-MM-DD') AS "closesOn", to_char(w.coverage_on, 'YYYY-MM-DD') AS "coverageOn" FROM enrollment_windows w LEFT JOIN employees e ON e.id = w.employee_id`;
@@ -112,7 +113,7 @@ export function openEnrollment(member: Member, input: z.infer<typeof windowField
 export function reportEvent(member: Member, input: z.infer<typeof eventFields>) {
   return runAsMember(member, async (client, actor) => {
     if (!mayUse(actor, input.employeeId)) throw new PeopleError("You can only report your own events.");
-    await requireOwnEmployee(client, { ...actor, employeeId: input.employeeId });
+    await requireEnrollmentEligible(client, input.employeeId);
     if (input.eventOn > addDays(today(), 60) || input.eventOn < addDays(today(), -60)) throw new PeopleError("Report an event within 60 days of when it happens.");
     const open = actor.role === "admin";
     const { rowCount } = await client.query("SELECT 1 FROM enrollment_windows WHERE employee_id = $1 AND state = 'requested'", [input.employeeId]);
@@ -132,6 +133,7 @@ export function decideEvent(member: Member, input: { id: string; decision: "appr
     const { rows: [event] } = await client.query<{ employeeId: string; eventOn: string }>(`SELECT employee_id AS "employeeId", to_char(event_on, 'YYYY-MM-DD') AS "eventOn" FROM enrollment_windows WHERE id = $1 AND state = 'requested'`, [input.id]);
     if (!event) throw new PeopleError("This request was already decided.");
     const open = input.decision === "approved";
+    if (open) await requireEnrollmentEligible(client, event.employeeId);
     const opensOn = event.eventOn > today() ? event.eventOn : today();
     await client.query("UPDATE enrollment_windows SET state = $2, opens_on = $3, closes_on = $4 WHERE id = $1", [input.id, open ? "open" : "declined", opensOn, addDays(opensOn, 30)]);
     await audit(client, member, open ? "enrollment.opened" : "enrollment.declined", { employeeId: event.employeeId });
@@ -146,17 +148,23 @@ async function readPerson(client: Client, employeeId: string) {
   return rows[0] ?? null;
 }
 
+async function requireEnrollmentEligible(client: Client, employeeId: string) {
+  const person = await readPerson(client, employeeId);
+  if (!person || person.status === "offboarding" || person.hireDate > today()) throw new PeopleError("Enrollment requires a current employee who has started work and is not leaving.");
+}
+
 // A person's own life event comes first, then open enrollment, then the new hire period.
 async function openWindow(client: Client, person: Person): Promise<OpenWindow | null> {
   const day = today();
+  if (person.status === "offboarding" || person.hireDate > day) return null;
   const { rows: [window] } = await client.query<OpenWindow>(
     `SELECT name, to_char(closes_on, 'YYYY-MM-DD') AS "closesOn", to_char(coverage_on, 'YYYY-MM-DD') AS "coverageOn", created_at::text AS since, employee_id IS NOT NULL AS event FROM enrollment_windows
      WHERE state = 'open' AND (employee_id IS NULL OR employee_id = $1) AND opens_on <= $2 AND closes_on >= $2 ORDER BY employee_id IS NULL, closes_on DESC, id LIMIT 1`, [person.id, day]);
   if (window) return window;
   const { newHireDays } = await readPaySettings(client);
   const closesOn = addDays(person.hireDate, newHireDays);
-  if (!newHireDays || closesOn < day || person.status === "offboarding") return null;
-  return { name: "New hire enrollment", closesOn, coverageOn: person.hireDate, since: addDays(person.hireDate, -366), event: false };
+  if (!newHireDays || closesOn < day) return null;
+  return { name: "New hire enrollment", closesOn, coverageOn: person.hireDate, since: person.hireDate, event: false };
 }
 
 const coverageStart = (window: OpenWindow, person: Person, plan: Pick<Plan, "waitingDays"> | null) => {
@@ -283,7 +291,7 @@ export function decideElection(member: Member, input: { id: string; decision: "a
       if (actor.employeeId !== election.employeeId) throw new PeopleError("You can only cancel your own choices.");
     } else if (actor.role !== "admin") throw new PeopleError("Administrator access is required.");
     if (input.decision === "approved") {
-      if (election.status === "archived") throw new PeopleError("Archived profiles are read-only.");
+      await requireEnrollmentEligible(client, election.employeeId);
       if (!election.eligible) throw new PeopleError("They are no longer eligible for this plan. Decline the choice.");
       // New coverage replaces the old one from its first day, so one plan type never has two in force.
       await client.query(
@@ -308,7 +316,7 @@ export function endElection(member: Member, input: { id: string; endsOn: string 
 
 // Leaving ends every coverage on the last day and leaves a task for the administrator to tell the carrier.
 export async function endCoverageForLeaver(client: PoolClient, member: Member, employeeId: string) {
-  await client.query("UPDATE benefit_elections SET state = 'cancelled', decided_by = $2, decided_at = now() WHERE employee_id = $1 AND state = 'pending'", [employeeId, member.id]);
+
   const ended = await alignCoverage(client, employeeId);
   if (!ended) return;
   await client.query("INSERT INTO benefit_notices (employee_id) VALUES ($1) ON CONFLICT (employee_id) WHERE done_at IS NULL DO NOTHING", [employeeId]);
@@ -337,6 +345,19 @@ const openNotice = `SELECT n.id, n.employee_id AS "employeeId", concat_ws(' ', e
   FROM benefit_notices n JOIN employees e ON e.id = n.employee_id WHERE n.done_at IS NULL`;
 
 // When a last day moves or offboarding is cancelled, coverage follows the employee record again, up to any end it already had.
+export async function syncDepartureCoverage(client: PoolClient, member: Member, employeeId: string, cancelled: boolean) {
+  const { rowCount } = await client.query(
+    `UPDATE benefit_elections x SET state='approved', coverage_end=least(x.end_before_leaving, e.last_day)
+     FROM employees e WHERE e.id=$1 AND ${misaligned}`, [employeeId],
+  );
+  const shortened = await alignCoverage(client, employeeId);
+  if (cancelled) await forgetLeaving(client, employeeId);
+  if (rowCount || shortened) {
+    await client.query("INSERT INTO benefit_notices (employee_id) VALUES ($1) ON CONFLICT (employee_id) WHERE done_at IS NULL DO NOTHING", [employeeId]);
+    await audit(client, member, "election.restored", { employeeId, detail: cancelled ? "Departure cancelled" : "Last day changed" });
+  }
+}
+
 export function restoreCoverage(member: Member, id: string) {
   return runAsAdmin(member, async (client) => {
     const { rows: [notice] } = await client.query<Notice>(`${openNotice} AND n.id = $1`, [id]);
@@ -362,8 +383,8 @@ export function closeNotice(member: Member, id: string) {
 export async function benefitsOverview() {
   await requireAdmin();
   const [pending, events, notices, current] = await Promise.all([
-    pool().query<Election>(`${electionSelect} WHERE x.state = 'pending' AND e.status <> 'archived' ORDER BY x.created_at, x.id LIMIT 100`),
-    pool().query<EnrollmentWindow>(`${windowSelect} WHERE w.state = 'requested' ORDER BY w.created_at, w.id LIMIT 60`),
+    pool().query<Election>(`${electionSelect} WHERE x.state = 'pending' AND e.status IN ('onboarding','active') AND e.hire_date <= current_date ORDER BY x.created_at, x.id LIMIT 100`),
+    pool().query<EnrollmentWindow>(`${windowSelect} WHERE w.state = 'requested' AND e.status IN ('onboarding','active') AND e.hire_date <= current_date ORDER BY w.created_at, w.id LIMIT 60`),
     pool().query<Notice>(`${openNotice} ORDER BY e.last_day, n.id LIMIT 60`),
     pool().query<Election>(`${electionSelect} WHERE x.state = 'approved' AND x.plan_id IS NOT NULL AND (x.coverage_end IS NULL OR x.coverage_end >= current_date) ORDER BY lower(e.last_name), lower(e.first_name), e.id, x.plan_kind LIMIT 1000`),
   ]);
@@ -398,13 +419,14 @@ export async function enrollmentStatus(employeeId: string) {
   if (!person || !window) return { open: false, done: false, window: null };
   const kinds = new Set((await plans(pool(), true)).filter((plan) => eligiblePlan(plan, person) && ratesOn(plan, coverageStart(window, person, plan)).length).map((plan) => plan.kind));
   if (!kinds.size) return { open: false, done: false, window: null };
-  const { rows } = await pool().query<{ planKind: PlanKind }>(`SELECT DISTINCT plan_kind AS "planKind" FROM benefit_elections WHERE employee_id = $1 AND state IN ('pending', 'approved') AND created_at >= $2::timestamptz`, [employeeId, window.since]);
+  const { rows } = await pool().query<{ planKind: PlanKind }>(`SELECT DISTINCT plan_kind AS "planKind" FROM benefit_elections WHERE employee_id = $1 AND state IN ('pending', 'approved') AND created_at >= greatest($2::timestamptz, $3::date::timestamptz,
+    (SELECT max(opened_at) FROM employee_workflows WHERE employee_id=$1 AND kind='onboarding'))`, [employeeId, window.since, person.hireDate]);
   return { open: true, done: window.event ? rows.length > 0 : [...kinds].every((kind) => rows.some((row) => row.planKind === kind)), window };
 }
 
 export async function benefitCounts() {
   const { rows } = await pool().query<{ elections: number; events: number; notices: number }>(
-    `SELECT (SELECT count(*)::int FROM benefit_elections x JOIN employees e ON e.id = x.employee_id WHERE x.state = 'pending' AND e.status <> 'archived') AS elections, (SELECT count(*)::int FROM enrollment_windows WHERE state = 'requested') AS events,
+    `SELECT (SELECT count(*)::int FROM benefit_elections x JOIN employees e ON e.id = x.employee_id WHERE x.state = 'pending' AND e.status IN ('onboarding','active') AND e.hire_date <= current_date) AS elections, (SELECT count(*)::int FROM enrollment_windows WHERE state = 'requested') AS events,
      (SELECT count(*)::int FROM benefit_notices WHERE done_at IS NULL) AS notices`);
   return rows[0];
 }

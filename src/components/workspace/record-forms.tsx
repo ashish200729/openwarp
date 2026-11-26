@@ -70,8 +70,8 @@ export function FinishWorkflow({ action, employeeId, workflowId, kind, hasOpenTa
     <FormError error={state.error} />
     {hasOpenTasks && <p className="text-xs text-muted">Complete all tasks to {onboarding ? "activate this employee" : "archive this profile"}.</p>}
     <div className="flex flex-wrap gap-2">
-      <SubmitButton name="operation" value="complete" disabled={hasOpenTasks} confirm={onboarding ? undefined : { title: "Archive this profile?", body: "Their sign-in is disabled and their sessions end. The record and its history stay.", action: "Archive now", danger: true }}>{onboarding ? "Activate employee" : "Archive profile"}</SubmitButton>
-      <SubmitButton name="operation" value="cancel" variant="text" confirm={onboarding ? { title: "Cancel onboarding?", body: "The profile is archived. You can restart onboarding later.", action: "Cancel and archive", danger: true } : { title: "Cancel offboarding?", body: "They return to active, and the last day is cleared.", action: "Return to active" }}>{onboarding ? "Cancel onboarding and archive" : "Cancel offboarding"}</SubmitButton>
+      <SubmitButton name="operation" value="complete" disabled={hasOpenTasks} confirm={onboarding ? undefined : { title: "Archive this profile?", body: "Their sign-in is disabled. Outstanding uploads, unsigned requests and unfinished training are closed. Completed records stay in their history.", action: "Archive now", danger: true }}>{onboarding ? "Activate employee" : "Archive profile"}</SubmitButton>
+      <SubmitButton name="operation" value="cancel" variant="text" confirm={onboarding ? { title: "Cancel onboarding?", body: "The profile is archived and its open document, signature and training requests are closed. You can restart onboarding later.", action: "Cancel and archive", danger: true } : { title: "Cancel offboarding?", body: "They return to active, and the last day is cleared.", action: "Return to active" }}>{onboarding ? "Cancel onboarding and archive" : "Cancel offboarding"}</SubmitButton>
     </div>
   </form>;
 }

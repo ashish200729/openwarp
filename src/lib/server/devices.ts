@@ -13,7 +13,7 @@ import { pool } from "./db";
 import { requireAdmin, type Member } from "./member";
 import { notify, notifyDeciders } from "./notify";
 import { readCompany } from "./settings";
-import { audit, PeopleError, requireDecider, requireOwnEmployee, runAsAdmin, runAsMember } from "./write";
+import { audit, ensureCurrentTeam, PeopleError, requireDecider, requireOwnEmployee, runAsAdmin, runAsMember } from "./write";
 
 export type Device = {
   id: string; assetTag: string; kind: DeviceKind; make: string; model: string; serial: string; purchasedOn: string | null; costCents: number | null; currency: string; warrantyEndsOn: string | null;
@@ -54,9 +54,11 @@ export function saveWorkplaceSettings(member: Member, input: z.infer<typeof work
   });
 }
 
+const returnDue = "least(a.return_due_on, CASE WHEN a.returned_at IS NULL AND e.status = 'offboarding' THEN e.last_day END)";
+
 const deviceColumns = `d.id, d.asset_tag AS "assetTag", d.kind, d.make, d.model, d.serial, to_char(d.purchased_on, 'YYYY-MM-DD') AS "purchasedOn", d.cost_cents::float8 AS "costCents", d.currency,
   to_char(d.warranty_ends_on, 'YYYY-MM-DD') AS "warrantyEndsOn", d.status, d.condition, d.notes, d.version, a.employee_id AS "holderId", nullif(concat_ws(' ', e.first_name, e.last_name), '') AS holder,
-  a.id AS "assignmentId", to_char(a.return_due_on, 'YYYY-MM-DD') AS "returnDueOn", a.sent_back_at IS NOT NULL AS "sentBack", a.received_at IS NOT NULL AS received`;
+  a.id AS "assignmentId", to_char(${returnDue}, 'YYYY-MM-DD') AS "returnDueOn", a.sent_back_at IS NOT NULL AS "sentBack", a.received_at IS NOT NULL AS received`;
 const deviceFrom = `FROM devices d LEFT JOIN device_assignments a ON a.device_id = d.id AND a.returned_at IS NULL LEFT JOIN employees e ON e.id = a.employee_id`;
 const deviceWhere = `WHERE ($1 = '' OR strpos(lower(concat_ws(' ', d.asset_tag, d.make, d.model, d.serial, e.first_name, e.last_name)), lower($1)) > 0) AND ($2 = '' OR d.status = $2) AND ($3 = '' OR d.kind = $3)`;
 
@@ -91,7 +93,7 @@ export async function readDevice(id: string) {
   if (!device) return null;
   const [assignments, repairs, attestations] = await Promise.all([
     pool().query<DeviceAssignment>(
-      `SELECT a.id, a.employee_id AS "employeeId", concat_ws(' ', e.first_name, e.last_name) AS "employeeName", a.assigned_at AS "assignedAt", a.received_at AS "receivedAt", to_char(a.return_due_on, 'YYYY-MM-DD') AS "returnDueOn",
+      `SELECT a.id, a.employee_id AS "employeeId", concat_ws(' ', e.first_name, e.last_name) AS "employeeName", a.assigned_at AS "assignedAt", a.received_at AS "receivedAt", to_char(${returnDue}, 'YYYY-MM-DD') AS "returnDueOn",
        a.sent_back_at AS "sentBackAt", a.returned_at AS "returnedAt", a.return_condition AS "returnCondition", a.return_note AS "returnNote"
        FROM device_assignments a JOIN employees e ON e.id = a.employee_id WHERE a.device_id = $1 ORDER BY a.assigned_at DESC LIMIT 100`, [id],
     ),
@@ -108,8 +110,8 @@ export async function readDevice(id: string) {
 }
 
 async function currentDevice(client: PoolClient, id: string, version?: number) {
-  const { rows: [device] } = await client.query<{ assetTag: string; kind: DeviceKind; status: DeviceStatus; version: number; assignmentId: string | null; holderId: string | null }>(
-    `SELECT d.asset_tag AS "assetTag", d.kind, d.status, d.version, a.id AS "assignmentId", a.employee_id AS "holderId" ${deviceFrom} WHERE d.id = $1`, [id],
+  const { rows: [device] } = await client.query<{ assetTag: string; kind: DeviceKind; status: DeviceStatus; version: number; assignmentId: string | null; holderId: string | null; returnDueOn: string | null }>(
+    `SELECT d.asset_tag AS "assetTag", d.kind, d.status, d.version, a.id AS "assignmentId", a.employee_id AS "holderId", to_char(${returnDue}, 'YYYY-MM-DD') AS "returnDueOn" ${deviceFrom} WHERE d.id = $1`, [id],
   );
   if (!device) throw new PeopleError("This device could not be found.");
   if (version !== undefined && device.version !== version) throw new PeopleError("This device changed while you were editing. Reload it and try again.");
@@ -188,7 +190,7 @@ export function returnDevice(member: Member, input: z.infer<typeof deviceReturnF
     const device = await currentDevice(client, input.id, input.version);
     if (!device.assignmentId || !device.holderId) throw new PeopleError("This device was already returned.");
     const lost = input.condition === "lost";
-    await client.query("UPDATE device_assignments SET returned_at = now(), returned_to = $2, return_condition = $3, return_note = $4 WHERE id = $1", [device.assignmentId, member.id, input.condition, input.note]);
+    await client.query("UPDATE device_assignments SET returned_at = now(), returned_to = $2, return_condition = $3, return_note = $4, return_due_on = $5 WHERE id = $1", [device.assignmentId, member.id, input.condition, input.note, device.returnDueOn]);
     await client.query("UPDATE devices SET status = $2, condition = CASE WHEN $3 = 'lost' THEN condition ELSE $3 END, version = version + 1 WHERE id = $1", [input.id, lost ? "lost" : input.next, input.condition]);
     await finishLinkedTasks(client, member, device.holderId, { area: "device", deviceId: input.id });
     await audit(client, member, "device.returned", { employeeId: device.holderId, detail: lost ? `${device.assetTag}, recorded as lost` : device.assetTag });
@@ -268,10 +270,10 @@ const attestDue = "(coalesce((SELECT max(t.attested_at) FROM device_attestations
 export async function ownDevices(member: Member) {
   if (!member.employeeId) return [];
   const { rows } = await pool().query<OwnDevice>(
-    `SELECT d.id, a.id AS "assignmentId", d.asset_tag AS "assetTag", d.kind, d.make, d.model, d.serial, a.assigned_at AS "assignedAt", a.received_at AS "receivedAt", to_char(a.return_due_on, 'YYYY-MM-DD') AS "returnDueOn",
+    `SELECT d.id, a.id AS "assignmentId", d.asset_tag AS "assetTag", d.kind, d.make, d.model, d.serial, a.assigned_at AS "assignedAt", a.received_at AS "receivedAt", to_char(${returnDue}, 'YYYY-MM-DD') AS "returnDueOn",
      a.sent_back_at AS "sentBackAt", to_char(${attestDue}, 'YYYY-MM-DD') AS "attestDueOn", a.received_at IS NOT NULL AND a.sent_back_at IS NULL AND d.kind IN ('laptop', 'desktop', 'phone', 'tablet') AND ${attestDue} <= current_date AS "attestDue",
      (SELECT count(*)::int FROM device_repairs r WHERE r.device_id = d.id AND r.closed_on IS NULL) AS "openRepairs"
-     FROM device_assignments a JOIN devices d ON d.id = a.device_id CROSS JOIN workplace_settings s WHERE a.employee_id = $1 AND a.returned_at IS NULL ORDER BY a.assigned_at DESC LIMIT 50`, [member.employeeId],
+     FROM device_assignments a JOIN devices d ON d.id = a.device_id JOIN employees e ON e.id=a.employee_id CROSS JOIN workplace_settings s WHERE a.employee_id = $1 AND a.returned_at IS NULL ORDER BY a.assigned_at DESC LIMIT 50`, [member.employeeId],
   );
   return rows;
 }
@@ -290,9 +292,20 @@ export async function ownDeviceRequests(member: Member) {
   return rows;
 }
 
+export async function canRequestEquipment(employeeId: string | null, db: Pick<PoolClient, "query"> = pool()) {
+  if (!employeeId) return false;
+  const { rowCount } = await db.query("SELECT 1 FROM employees WHERE id = $1 AND status IN ('onboarding', 'active')", [employeeId]);
+  return Boolean(rowCount);
+}
+
+async function requireEquipmentRecipient(client: PoolClient, employeeId: string) {
+  if (!await canRequestEquipment(employeeId, client)) throw new PeopleError("New equipment and app access are only available to active or onboarding employees.");
+}
+
 export function requestDevice(member: Member, input: z.infer<typeof deviceRequestFields>) {
   return runAsMember(member, async (client, actor) => {
     const employeeId = await requireOwnEmployee(client, actor);
+    await requireEquipmentRecipient(client, employeeId);
     const { rowCount } = await client.query("INSERT INTO device_requests (employee_id, kind, note) VALUES ($1, $2, $3) ON CONFLICT (employee_id, kind) WHERE state = 'open' DO NOTHING", [employeeId, input.kind, input.note]);
     if (!rowCount) throw new PeopleError("You already have an open request for that type.");
     await audit(client, member, "device.requested", { employeeId, detail: deviceKindLabels[input.kind] });
@@ -402,7 +415,7 @@ export async function ownGrants(member: Member) {
 export async function pendingGrants(member: Member) {
   if (member.role !== "admin" && !member.managesPeople) return [];
   const { rows } = await pool().query<Grant>(
-    `SELECT ${grantColumns} WHERE e.status <> 'archived' AND ($1 = 'admin' AND g.state IN ('requested', 'approved') OR $1 <> 'admin' AND g.state = 'requested' AND e.manager_id = $2) ORDER BY g.state DESC, g.requested_at, g.id LIMIT 100`,
+    `SELECT ${grantColumns} WHERE e.status IN ('active', 'onboarding') AND ($1 = 'admin' AND g.state IN ('requested', 'approved') OR $1 <> 'admin' AND g.state = 'requested' AND e.manager_id = $2) ORDER BY g.state DESC, g.requested_at, g.id LIMIT 100`,
     [member.role, member.employeeId],
   );
   return rows;
@@ -453,6 +466,7 @@ async function insertGrant(client: PoolClient, member: Member, input: { appId: s
 export function requestApp(member: Member, input: z.infer<typeof appRequestFields>) {
   return runAsMember(member, async (client, actor) => {
     const employeeId = await requireOwnEmployee(client, actor);
+    await requireEquipmentRecipient(client, employeeId);
     const app = await activeApp(client, input.appId);
     if (!await insertGrant(client, member, { ...input, employeeId, state: "requested" })) throw new PeopleError(`You already have access to ${app.name} or an open request for it.`);
     await audit(client, member, "access.requested", { employeeId, detail: app.name });
@@ -463,8 +477,7 @@ export function requestApp(member: Member, input: z.infer<typeof appRequestField
 export function grantApp(member: Member, input: z.infer<typeof appGrantFields>) {
   return runAsAdmin(member, async (client) => {
     const app = await activeApp(client, input.appId);
-    const { rowCount } = await client.query("SELECT 1 FROM employees WHERE id = $1 AND status <> 'archived'", [input.employeeId]);
-    if (!rowCount) throw new PeopleError("Choose someone in the directory.");
+    await requireEquipmentRecipient(client, input.employeeId);
     if (!await insertGrant(client, member, { ...input, state: "granted" })) throw new PeopleError(`This person already has access to ${app.name} or an open request for it.`);
     await audit(client, member, "access.granted", { employeeId: input.employeeId, detail: app.name });
     await notify(client, member, { employeeId: input.employeeId }, { title: `You have access to ${app.name}`, body: input.role, href: "/workspace/devices/apps" });
@@ -485,6 +498,7 @@ export function commandGrant(member: Member, input: z.infer<typeof grantCommandF
     } else if (operation === "granted" || operation === "revoked") {
       if (actor.role !== "admin") throw new PeopleError("Only an administrator can record access.");
     } else await requireDecider(client, actor, grant.employeeId);
+    if (operation === "approved" || operation === "granted") await requireEquipmentRecipient(client, grant.employeeId);
     if (!grantFrom[operation].includes(grant.state)) throw new PeopleError("This access record already changed. Reload the page.");
     if (operation === "declined" && grant.state === "approved" && actor.role !== "admin") throw new PeopleError("This request was already approved.");
     const decides = operation === "approved" || operation === "declined" || operation === "granted";
@@ -512,6 +526,7 @@ export async function listAppDefaults() {
 
 export function addAppDefault(member: Member, input: z.infer<typeof appDefaultFields>) {
   return runAsAdmin(member, async (client) => {
+    await ensureCurrentTeam(client, input.teamId);
     const app = await activeApp(client, input.appId);
     const { rowCount } = await client.query("INSERT INTO app_defaults (app_id, team_id, title, role) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING", [input.appId, input.teamId, input.title, input.role]);
     if (!rowCount) throw new PeopleError("That default already exists.");
@@ -557,8 +572,6 @@ export async function setUpWorkplace(client: PoolClient, member: Member, employe
 
 export async function closeWorkplace(client: PoolClient, member: Member, employeeId: string) {
   const { rows: [employee] } = await client.query<{ lastDay: string | null }>(`SELECT to_char(last_day, 'YYYY-MM-DD') AS "lastDay" FROM employees WHERE id = $1`, [employeeId]);
-  await client.query("UPDATE device_requests SET state = 'cancelled', closed_by = $2, closed_at = now() WHERE employee_id = $1 AND state = 'open'", [employeeId, member.id]);
-  await client.query("UPDATE app_grants SET state = 'declined', closed_by = $2, closed_at = now() WHERE employee_id = $1 AND state IN ('requested', 'approved')", [employeeId, member.id]);
   const { rows: grants } = await client.query<{ id: string; name: string }>("SELECT g.id, p.name FROM app_grants g JOIN apps p ON p.id = g.app_id WHERE g.employee_id = $1 AND g.state = 'granted' ORDER BY lower(p.name)", [employeeId]);
   for (const grant of grants) await addLinkedTask(client, employeeId, `Remove ${grant.name} access`, { area: "app", grantId: grant.id }, employee.lastDay);
   const { rows: devices } = await client.query<{ id: string; assetTag: string; kind: DeviceKind }>(
@@ -566,14 +579,13 @@ export async function closeWorkplace(client: PoolClient, member: Member, employe
   );
   for (const device of devices) await addLinkedTask(client, employeeId, `Collect ${deviceKindLabels[device.kind].toLowerCase()} ${device.assetTag}`, { area: "device", deviceId: device.id }, employee.lastDay);
   if (!devices.length) return;
-  await client.query("UPDATE device_assignments SET return_due_on = $2 WHERE employee_id = $1 AND returned_at IS NULL", [employeeId, employee.lastDay]);
   await notify(client, member, { employeeId }, { title: devices.length === 1 ? `Return device ${devices[0].assetTag}` : `Return ${devices.length} devices`, body: employee.lastDay ? `Due ${formatDate(employee.lastDay)}` : "", href: "/workspace/devices" });
 }
 
 export async function workplaceBlockers(client: PoolClient, employeeId: string) {
   const { rows: [held] } = await client.query<{ devices: string | null; apps: string | null }>(
     `SELECT (SELECT string_agg(d.asset_tag, ', ' ORDER BY lower(d.asset_tag)) FROM device_assignments a JOIN devices d ON d.id = a.device_id WHERE a.employee_id = $1 AND a.returned_at IS NULL) AS devices,
-     (SELECT string_agg(p.name, ', ' ORDER BY lower(p.name)) FROM app_grants g JOIN apps p ON p.id = g.app_id WHERE g.employee_id = $1 AND g.state = 'granted' AND p.criticality = 'critical') AS apps`, [employeeId],
+     (SELECT string_agg(p.name, ', ' ORDER BY lower(p.name)) FROM app_grants g JOIN apps p ON p.id = g.app_id WHERE g.employee_id = $1 AND g.state = 'granted') AS apps`, [employeeId],
   );
   return [held.devices && `Record the return of ${held.devices}.`, held.apps && `Record that access to ${held.apps} was removed.`].filter((line) => line !== null);
 }
@@ -584,4 +596,9 @@ export async function upcomingRenewals(member: Member, days = 30) {
     `SELECT id, name, to_char(renews_on, 'YYYY-MM-DD') AS "renewsOn" FROM apps WHERE archived_at IS NULL AND renews_on <= current_date + $1::int ORDER BY renews_on, lower(name) LIMIT 20`, [days],
   );
   return rows;
+}
+
+export async function closeEquipmentRequests(client: PoolClient, member: Member, employeeId: string) {
+  await client.query("UPDATE device_requests SET state = 'cancelled', closed_by = $2, closed_at = now() WHERE employee_id = $1 AND state = 'open'", [employeeId, member.id]);
+  await client.query("UPDATE app_grants SET state = 'declined', closed_by = $2, closed_at = now() WHERE employee_id = $1 AND state IN ('requested', 'approved')", [employeeId, member.id]);
 }
