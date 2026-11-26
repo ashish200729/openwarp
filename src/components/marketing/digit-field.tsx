@@ -2,8 +2,6 @@
 
 import { useEffect, useRef, type ComponentProps } from "react";
 
-// OpenWarp's own digit field. It accepts the subset of Readout props that the hero uses,
-// so a licensed Breeze UI Readout can replace it through the #openwarp-readout alias.
 type DigitFieldProps = Omit<ComponentProps<"canvas">, "color"> & {
   accentColor?: string;
   color?: string;
@@ -126,7 +124,7 @@ function readColor(value: string): [number, number, number] {
   return [red / 255, green / 255, blue / 255];
 }
 
-export function Readout({
+export function DigitField({
   accentColor = "var(--foreground)", color = "#0a7cff", dotSize = 2, fps = 40, level = 0.38,
   smoke = 1, speed = 0.5, strength = 1, waveHeight = 1, style, ...props
 }: DigitFieldProps) {

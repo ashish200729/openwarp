@@ -8,4 +8,3 @@ test-results
 coverage
 *.tsbuildinfo
 .DS_Store
-src/components/breeze

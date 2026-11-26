@@ -75,16 +75,6 @@ For the workspace in development, use a dedicated PostgreSQL database. Create th
 
 The interface follows the visitor’s system theme until they use the theme switch. The choice is stored in the `openwarp-theme` cookie and rendered by the server. Colors are semantic tokens in `src/app/globals.css`, each with a light and a dark value.
 
-## Optional Breeze UI Readout
-
-The hero and sign-in backgrounds use OpenWarp’s own WebGL digit field in `src/components/marketing/digit-field.tsx`. Developers with their own Breeze UI license can swap in the Breeze Readout in a local checkout. The public build and Docker setup require no Breeze credentials.
-
-1. Set `BREEZE_TOKEN` in `.env.local`. The `@breeze` registry in `components.json` passes it in the Authorization header.
-2. Run `npx shadcn@latest add @breeze/readout`. Keep the CLI-created `src/components/breeze/readout.tsx` file and its license notices intact.
-3. Set `OPENWARP_ENABLE_BREEZE_READOUT=1` in `.env.local` and restart the development server or rebuild.
-
-Keep the token and the installed source out of Git and public artifacts. Refer to the [installation guide](https://www.breezeui.com/docs/installation.md), [component docs](https://www.breezeui.com/docs/components/readout.md), and [Breeze UI license](https://www.breezeui.com/license).
-
 ## Product captures
 
 The landing page shows real captures of the workspace in `public/screens`. Refresh them against a running workspace with sample data by setting `OPENWARP_CAPTURE_ORIGIN`, `OPENWARP_CAPTURE_EMAIL` and `OPENWARP_CAPTURE_PASSWORD`, then running `node scripts/capture-screens.mjs`.
