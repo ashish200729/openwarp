@@ -210,7 +210,7 @@ export async function listAbsences(start: string, end: string) {
   const { rows } = await pool().query<Absence>(
     `SELECT e.status='active' AS active, e.id AS "employeeId", concat_ws(' ', e.first_name, e.last_name) AS name, to_char(greatest(r.starts_on, e.hire_date), 'YYYY-MM-DD') AS "startsOn", to_char(least(r.ends_on, e.last_day), 'YYYY-MM-DD') AS "endsOn"
      FROM time_off_requests r JOIN employees e ON e.id = r.employee_id
-     WHERE r.state = 'approved' AND e.status <> 'archived' AND greatest(r.starts_on, e.hire_date) <= $2 AND least(r.ends_on, e.last_day) >= greatest(r.starts_on, e.hire_date, $1::date) ORDER BY r.starts_on, lower(e.last_name), e.id LIMIT 300`, [start, end],
+     WHERE r.state = 'approved' AND e.status <> 'archived' AND greatest(r.starts_on, e.hire_date) <= $2 AND least(r.ends_on, e.last_day) >= greatest(r.starts_on, e.hire_date, $1::date) ORDER BY r.starts_on, lower(e.last_name), e.id`, [start, end],
   );
   return rows;
 }

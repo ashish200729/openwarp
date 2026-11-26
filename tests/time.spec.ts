@@ -304,5 +304,8 @@ test("approved time off stays on the shared calendar while its owner is offboard
   await page.getByRole("button", { name: "Start offboarding" }).click();
   await expect(page.getByRole("heading", { name: "Offboarding checklist" })).toBeVisible();
   await page.goto(`/workspace/time-off?month=${leaveDay.slice(0, 7)}`);
-  await expect(page.getByRole("table", { name: /^Approved time off in/ }).getByRole("link", { name })).toBeVisible();
+  const dayCell = page.getByRole("table", { name: /^Approved time off in/ }).getByRole("cell").filter({ hasText: name });
+  const link = dayCell.getByRole("link", { name });
+  if (!await link.isVisible()) await dayCell.locator("summary").click();
+  await expect(link).toBeVisible();
 });
