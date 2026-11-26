@@ -17,12 +17,16 @@ import { acknowledgeAnnouncementAction, removeAnnouncementAction, saveAnnounceme
 export const metadata: Metadata = { title: "Announcements" };
 
 function AnnouncementForm({ announcement, teams }: { announcement?: Announcement; teams: Team[] }) {
+  const options = teams.map(team => ({ value: team.id, label: `${team.name} team` }));
+  if (announcement?.teamId && !teams.some(team => team.id === announcement.teamId)) {
+    options.push({ value: announcement.teamId, label: `${announcement.teamName || "Previous team"} (archived)` });
+  }
   return <section className={`${panelStyle} mb-8 max-w-2xl p-5`}>
     <h2 className="mb-4 text-[15px] font-semibold">{announcement ? "Edit announcement" : "Write an announcement"}</h2>
     <ActionForm action={saveAnnouncementAction} submit={announcement ? "Save announcement" : "Publish"} pending="Saving…" secondary={<Link href="/workspace/announcements" className={textButton}>Close</Link>} hidden={announcement ? { id: announcement.id, version: announcement.version } : {}}>
       <Field name="title" label="Title" required maxLength={140} defaultValue={announcement?.title} />
       <Field name="body" label="Message" required multiline maxLength={8_000} defaultValue={announcement?.body} className="min-h-40" hint="Start a line with - for a list, and put **two asterisks** around bold text." />
-      <div className="grid gap-4 sm:grid-cols-3"><Field name="teamId" label="For" required defaultValue={announcement?.teamId ?? ""} options={[{ value: "", label: "Everyone" }, ...teams.map((team) => ({ value: team.id, label: `${team.name} team` }))]} /><Field name="publishOn" label="Publish on" type="date" required defaultValue={announcement?.publishOn ?? today()} /><Field name="expiresOn" label="Last day shown" type="date" defaultValue={announcement?.expiresOn ?? ""} /></div>
+      <div className="grid gap-4 sm:grid-cols-3"><Field name="teamId" label="For" required defaultValue={announcement?.teamId ?? ""} options={[{ value: "", label: "Everyone" }, ...options]} /><Field name="publishOn" label="Publish on" type="date" required defaultValue={announcement?.publishOn ?? today()} /><Field name="expiresOn" label="Last day shown" type="date" defaultValue={announcement?.expiresOn ?? ""} /></div>
       <Checkbox name="pinned" label="Keep at the top" defaultChecked={announcement?.pinned} />
       <Checkbox name="needsAcknowledgement" label="Ask people to acknowledge it" defaultChecked={announcement?.needsAcknowledgement} />
     </ActionForm>

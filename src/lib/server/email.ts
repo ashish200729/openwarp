@@ -207,17 +207,22 @@ export async function sendMail(mail: Mail) {
   }
 }
 
-type Queued = { userId: string; kind: "notification" | "invitation" | "reset" | "changed"; subject: string; text: string };
+type Queued = {
+  userId: string; kind: "notification" | "invitation" | "reset" | "changed"; subject: string; text: string;
+  notificationId?: string; passwordTokenHash?: string;
+};
 
 // Email is queued in the transaction it belongs to and sent by the worker. Without SMTP nothing is queued. Only notifications follow the person’s
 // email preference, so a security notice uses kind "changed" and can’t be switched off or marked read before it goes out.
-export async function queueEmail(client: Pick<PoolClient, "query">, { userId, kind, subject, text }: Queued) {
+export async function queueEmail(client: Pick<PoolClient, "query">, { userId, kind, subject, text, notificationId, passwordTokenHash }: Queued) {
   if (!emailConfigured()) return;
   const id = randomUUID();
   const body = `${text}\n\n${workspaceName()}\n${workspaceOrigin()}/workspace\n`;
   await client.query(
-    `INSERT INTO email_messages (id, kind, user_id, recipient, subject, body) SELECT $1, $2, u.id, u.email, $4, $5 FROM "user" u JOIN workspace_members m ON m.user_id = u.id WHERE u.id = $3 AND m.role <> 'disabled'`,
-    [id, kind, userId, subject.replace(/\s+/g, " ").slice(0, 200), seal(body, `email:${id}`)],
+    `INSERT INTO email_messages (id, kind, user_id, recipient, subject, body, notification_id, password_token_hash)
+     SELECT $1, $2, u.id, u.email, $4, $5, $6, $7 FROM "user" u JOIN workspace_members m ON m.user_id = u.id
+     WHERE u.id = $3 AND m.role <> 'disabled' ON CONFLICT DO NOTHING`,
+    [id, kind, userId, subject.replace(/\s+/g, " ").slice(0, 200), seal(body, `email:${id}`), notificationId ?? null, passwordTokenHash ?? null],
   );
 }
 
@@ -226,20 +231,29 @@ export const hashPasswordToken = (token: string) => keyedHash(token, "password-t
 export async function issuePasswordLink(client: PoolClient, userId: string, purpose: "reset" | "invitation") {
   const token = randomBytes(32).toString("base64url");
   const hash = hashPasswordToken(token);
+  const kind = purpose === "reset" ? "reset" : "invitation";
+  await client.query(
+    `UPDATE email_messages SET cancelled_at = coalesce(cancelled_at, now()), cancel_reason = 'superseded', body = NULL
+     WHERE user_id = $1 AND kind = $2 AND state = 'queued' AND cancelled_at IS NULL AND password_token_hash IS NOT NULL`, [userId, kind],
+  );
   await client.query("UPDATE password_tokens SET used_at = now() WHERE user_id = $1 AND purpose = $2 AND used_at IS NULL", [userId, purpose]);
   await client.query("INSERT INTO password_tokens (token_hash, user_id, purpose, expires_at) VALUES ($1, $2, $3, now() + $4::interval)", [hash, userId, purpose, purpose === "reset" ? "30 minutes" : "7 days"]);
-  return { link: `${workspaceOrigin()}${purpose === "reset" ? "/login/reset" : "/join"}?token=${token}`, version: hash.slice(0, 24) };
+  return { link: `${workspaceOrigin()}${purpose === "reset" ? "/login/reset" : "/join"}?token=${token}`, version: hash.slice(0, 24), tokenHash: hash };
 }
 
 export async function queuePasswordLink(client: PoolClient, userId: string, purpose: "reset" | "invitation") {
-  const { link } = await issuePasswordLink(client, userId, purpose);
+  const { link, tokenHash } = await issuePasswordLink(client, userId, purpose);
   await queueEmail(client, purpose === "reset"
-    ? { userId, kind: "reset", subject: "Reset your password", text: `Someone asked to reset your password. Open this link within 30 minutes to choose a new one. It works once.\n\n${link}\n\nIf it wasn’t you, ignore this email. Your password hasn’t changed.` }
-    : { userId, kind: "invitation", subject: `Your account for ${workspaceName()}`, text: `You have an account for ${workspaceName()}. Open this link within 7 days to choose your password. It works once.\n\n${link}` });
+    ? { userId, kind: "reset", subject: "Reset your password", text: `Someone asked to reset your password. Open this link within 30 minutes to choose a new one. It works once.\n\n${link}\n\nIf it wasn’t you, ignore this email. Your password hasn’t changed.`, passwordTokenHash: tokenHash }
+    : { userId, kind: "invitation", subject: `Your account for ${workspaceName()}`, text: `You have an account for ${workspaceName()}. Open this link within 7 days to choose your password. It works once.\n\n${link}`, passwordTokenHash: tokenHash });
 }
 
 export async function queueInvitation(client: PoolClient, userId: string, role: "admin" | "viewer") {
   if (!emailConfigured()) return;
+  await client.query(
+    `UPDATE email_messages SET cancelled_at = coalesce(cancelled_at, now()), cancel_reason = 'superseded', body = NULL
+     WHERE user_id = $1 AND kind = 'invitation' AND state = 'queued' AND cancelled_at IS NULL`, [userId],
+  );
   if (passwordAllowed(await readPolicy(client), role)) return queuePasswordLink(client, userId, "invitation");
   await queueEmail(client, { userId, kind: "invitation", subject: `Your account for ${workspaceName()}`, text: `You have an account for ${workspaceName()}. Sign in with ${ssoLabel()}:\n\n${workspaceOrigin()}/join?signin=sso` });
 }
@@ -255,7 +269,7 @@ export async function savePreference(member: Member, email: EmailPreference) {
 
 export type EmailStatus = {
   configured: boolean; server: string; from: string; problem: string; queued: number; failed: number;
-  recent: { id: string; kind: string; recipient: string; subject: string; state: "queued" | "sent" | "failed"; error: string; at: Date }[];
+  recent: { id: string; kind: string; recipient: string; subject: string; state: "queued" | "sent" | "failed" | "cancelled"; error: string; at: Date }[];
 };
 
 export async function readEmailStatus(member: Member): Promise<EmailStatus> {
@@ -273,8 +287,8 @@ export async function readEmailStatus(member: Member): Promise<EmailStatus> {
     }
   }
   const [counts, recent] = await Promise.all([
-    pool().query<{ queued: number; failed: number }>("SELECT count(*) FILTER (WHERE state = 'queued')::int AS queued, count(*) FILTER (WHERE state = 'failed')::int AS failed FROM email_messages"),
-    pool().query<EmailStatus["recent"][number]>("SELECT id, kind, recipient, subject, state, error, coalesce(sent_at, created_at) AS at FROM email_messages ORDER BY created_at DESC, id LIMIT 20"),
+    pool().query<{ queued: number; failed: number }>("SELECT count(*) FILTER (WHERE state = 'queued' AND cancelled_at IS NULL)::int AS queued, count(*) FILTER (WHERE state = 'failed' AND cancelled_at IS NULL)::int AS failed FROM email_messages"),
+    pool().query<EmailStatus["recent"][number]>("SELECT id, kind, recipient, subject, CASE WHEN cancelled_at IS NOT NULL THEN 'cancelled' ELSE state END AS state, coalesce(nullif(error, ''), nullif(cancel_reason, ''), '') AS error, coalesce(sent_at, created_at) AS at FROM email_messages ORDER BY created_at DESC, id LIMIT 20"),
   ]);
   return { configured, server, from: configured ? process.env.OPENWARP_EMAIL_FROM!.slice(0, 200) : "", problem, ...counts.rows[0], recent: recent.rows };
 }
@@ -293,17 +307,18 @@ export async function sendTestEmail(member: Member) {
   if (error) throw new PeopleError(error);
 }
 
-// Moves new notifications into the email queue. Anything already read, or older than a day when email was turned on, is left alone.
+// Moves new notifications into the email queue. Preference and recipient checks happen again at delivery,
+// because a queued message can outlive the account or preference that created it.
 async function queueNotifications() {
   await transaction(async (client) => {
     const { rows } = await client.query<{ id: string; userId: string; title: string; body: string; href: string; send: boolean }>(
       `SELECT n.id::text, n.user_id AS "userId", n.title, n.body, n.href,
-       n.read_at IS NULL AND n.created_at > now() - interval '1 day' AND m.role <> 'disabled' AND (coalesce(p.email, 'all') = 'all' OR p.email = 'requests' AND n.kind = 'request') AS send
-       FROM notifications n JOIN workspace_members m ON m.user_id = n.user_id LEFT JOIN user_preferences p ON p.user_id = n.user_id
+       n.read_at IS NULL AND n.created_at > now() - interval '1 day' AND n.retracted_at IS NULL AND m.role <> 'disabled' AS send
+       FROM notifications n JOIN workspace_members m ON m.user_id = n.user_id
        WHERE n.emailed_at IS NULL ORDER BY n.id LIMIT 200 FOR UPDATE OF n SKIP LOCKED`,
     );
     for (const row of rows) {
-      if (row.send) await queueEmail(client, { userId: row.userId, kind: "notification", subject: row.title, text: `${row.title}\n${row.body ? `${row.body}\n` : ""}\n${workspaceOrigin()}${row.href}\n\nChoose which emails you get in My account.` });
+      if (row.send) await queueEmail(client, { userId: row.userId, kind: "notification", notificationId: row.id, subject: row.title, text: `${row.title}\n${row.body ? `${row.body}\n` : ""}\n${workspaceOrigin()}${row.href}\n\nChoose which emails you get in My account.` });
     }
     if (rows.length) await client.query("UPDATE notifications SET emailed_at = now() WHERE id = ANY($1::bigint[])", [rows.map((row) => row.id)]);
   });
@@ -311,17 +326,75 @@ async function queueNotifications() {
 
 const maxAttempts = 6;
 
+async function cancelIneligibleEmail() {
+  await pool().query(
+    `UPDATE email_messages e SET cancelled_at = coalesce(cancelled_at, now()), cancel_reason = CASE
+       WHEN e.user_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM workspace_members m WHERE m.user_id = e.user_id AND m.role <> 'disabled') THEN 'recipient disabled'
+       WHEN e.password_token_hash IS NOT NULL AND NOT EXISTS (SELECT 1 FROM password_tokens t WHERE t.token_hash = e.password_token_hash AND t.used_at IS NULL AND t.expires_at > now()) THEN 'link expired or superseded'
+       WHEN e.notification_id IS NOT NULL AND NOT EXISTS (
+         SELECT 1 FROM notifications n LEFT JOIN user_preferences p ON p.user_id = n.user_id
+         WHERE n.id = e.notification_id AND n.retracted_at IS NULL AND n.read_at IS NULL AND n.created_at > now() - interval '1 day'
+           AND (coalesce(p.email, 'all') = 'all' OR p.email = 'requests' AND n.kind = 'request')
+       ) THEN 'notification no longer eligible'
+       ELSE cancel_reason END,
+       body = NULL
+     WHERE e.state = 'queued' AND e.cancelled_at IS NULL AND (
+       (e.user_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM workspace_members m WHERE m.user_id = e.user_id AND m.role <> 'disabled'))
+       OR (e.password_token_hash IS NOT NULL AND NOT EXISTS (SELECT 1 FROM password_tokens t WHERE t.token_hash = e.password_token_hash AND t.used_at IS NULL AND t.expires_at > now()))
+       OR (e.notification_id IS NOT NULL AND NOT EXISTS (
+         SELECT 1 FROM notifications n LEFT JOIN user_preferences p ON p.user_id = n.user_id
+         WHERE n.id = e.notification_id AND n.retracted_at IS NULL AND n.read_at IS NULL AND n.created_at > now() - interval '1 day'
+           AND (coalesce(p.email, 'all') = 'all' OR p.email = 'requests' AND n.kind = 'request')
+       ))
+     )`,
+  );
+}
+
+async function deliveryCancelReason(id: string) {
+  const { rows } = await pool().query<{ recipientActive: boolean; tokenValid: boolean; notificationValid: boolean }>(
+    `SELECT
+       (e.user_id IS NULL OR EXISTS (SELECT 1 FROM workspace_members m WHERE m.user_id = e.user_id AND m.role <> 'disabled')) AS "recipientActive",
+       (e.password_token_hash IS NULL OR EXISTS (SELECT 1 FROM password_tokens t WHERE t.token_hash = e.password_token_hash AND t.used_at IS NULL AND t.expires_at > now())) AS "tokenValid",
+       (e.notification_id IS NULL OR EXISTS (
+         SELECT 1 FROM notifications n LEFT JOIN user_preferences p ON p.user_id = n.user_id
+         WHERE n.id = e.notification_id AND n.retracted_at IS NULL AND n.read_at IS NULL AND n.created_at > now() - interval '1 day'
+           AND (coalesce(p.email, 'all') = 'all' OR p.email = 'requests' AND n.kind = 'request')
+       )) AS "notificationValid"
+     FROM email_messages e WHERE e.id = $1`, [id],
+  );
+  if (!rows[0]) return "message missing";
+  if (!rows[0].recipientActive) return "recipient disabled";
+  if (!rows[0].tokenValid) return "link expired or superseded";
+  if (!rows[0].notificationValid) return "notification no longer eligible";
+  return null;
+}
+
 export async function deliverEmail(stopped: () => boolean) {
   if (!emailConfigured()) return;
   await queueNotifications();
+  await cancelIneligibleEmail();
   // A claimed message is retried after five minutes if this process dies before it records the result.
   const { rows } = await pool().query<{ id: string; recipient: string; subject: string; body: Buffer; attempts: number }>(
     `UPDATE email_messages SET attempts = attempts + 1, next_attempt_at = now() + interval '5 minutes' WHERE id IN
-     (SELECT id FROM email_messages WHERE state = 'queued' AND next_attempt_at <= now() ORDER BY next_attempt_at LIMIT 20 FOR UPDATE SKIP LOCKED)
+     (SELECT e.id FROM email_messages e
+      WHERE e.state = 'queued' AND e.cancelled_at IS NULL AND e.next_attempt_at <= now()
+        AND (e.user_id IS NULL OR EXISTS (SELECT 1 FROM workspace_members m WHERE m.user_id = e.user_id AND m.role <> 'disabled'))
+        AND (e.password_token_hash IS NULL OR EXISTS (SELECT 1 FROM password_tokens t WHERE t.token_hash = e.password_token_hash AND t.used_at IS NULL AND t.expires_at > now()))
+        AND (e.notification_id IS NULL OR EXISTS (
+          SELECT 1 FROM notifications n LEFT JOIN user_preferences p ON p.user_id = n.user_id
+          WHERE n.id = e.notification_id AND n.retracted_at IS NULL AND n.read_at IS NULL AND n.created_at > now() - interval '1 day'
+            AND (coalesce(p.email, 'all') = 'all' OR p.email = 'requests' AND n.kind = 'request')
+        ))
+      ORDER BY e.next_attempt_at LIMIT 20 FOR UPDATE SKIP LOCKED)
      RETURNING id, recipient, subject, body, attempts`,
   );
   for (const message of rows) {
     if (stopped()) return;
+    const cancellation = await deliveryCancelReason(message.id);
+    if (cancellation) {
+      await pool().query("UPDATE email_messages SET cancelled_at = coalesce(cancelled_at, now()), cancel_reason = $2, body = NULL WHERE id = $1 AND cancelled_at IS NULL", [message.id, cancellation]);
+      continue;
+    }
     let error = "";
     try {
       await sendMail({ to: message.recipient, subject: message.subject, text: unseal(message.body, `email:${message.id}`) });

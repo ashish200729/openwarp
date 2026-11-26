@@ -179,7 +179,7 @@ export function submitChange(member: Member, input: z.infer<typeof changeFields>
     const proposal = proposals[input.kind].parse(input);
     await client.query("INSERT INTO employee_change_requests (employee_id, kind, proposal_sealed, requested_by) VALUES ($1, $2, $3, $4)", [employeeId, input.kind, sealField(JSON.stringify(proposal), employeeId, "change_request"), member.id]);
     await audit(client, member, "change_request.submitted", { employeeId, detail: changeLabels[input.kind] });
-    await notify(client, member, { role: "admin" }, { title: `${member.name} asked to change their ${changePhrases[input.kind]}`, href: `/workspace/people/${employeeId}/personal` });
+    await notify(client, member, { role: "admin" }, { kind: "request", title: `${member.name} asked to change their ${changePhrases[input.kind]}`, href: `/workspace/people/${employeeId}/personal` });
   });
 }
 

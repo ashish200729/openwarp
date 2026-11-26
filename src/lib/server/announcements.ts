@@ -5,7 +5,7 @@ import type { announcementFields } from "@/lib/domains/records";
 import { today } from "@/lib/operations";
 import { pool } from "./db";
 import { requireAdmin, type Member } from "./member";
-import { notify } from "./notify";
+import { notify, retractSource } from "./notify";
 import { audit, PeopleError, runAsAdmin, runAsMember } from "./write";
 
 export type Announcement = {
@@ -52,8 +52,14 @@ export async function readAnnouncement(id: string) {
   return rows[0] ?? null;
 }
 
-async function announce(client: PoolClient, actor: Member | null, announcement: { title: string; teamId: string | null; needsAcknowledgement: boolean }) {
-  const notice = { title: announcement.title, body: announcement.needsAcknowledgement ? "Please read and acknowledge this announcement." : "New announcement", href: "/workspace/announcements" };
+async function announce(client: PoolClient, actor: Member | null, announcement: { id: string; version: number; title: string; teamId: string | null; needsAcknowledgement: boolean }) {
+  const notice = {
+    title: announcement.title,
+    body: announcement.needsAcknowledgement ? "Please read and acknowledge this announcement." : "New announcement",
+    href: "/workspace/announcements",
+    kind: announcement.needsAcknowledgement ? "request" as const : undefined,
+    source: { kind: "announcement", id: announcement.id, revision: announcement.version },
+  };
   if (!announcement.teamId) return notify(client, actor, { everyone: true }, notice);
   const { rows } = await client.query<{ id: string }>("SELECT e.id FROM employees e JOIN workspace_members m ON m.employee_id = e.id WHERE e.team_id = $1 AND e.status <> 'archived'", [announcement.teamId]);
   for (const { id } of rows) await notify(client, actor, { employeeId: id }, notice);
@@ -62,31 +68,54 @@ async function announce(client: PoolClient, actor: Member | null, announcement: 
 export function saveAnnouncement(member: Member, input: z.infer<typeof announcementFields>) {
   return runAsAdmin(member, async (client) => {
     const day = today();
-    if (input.teamId) {
-      const { rowCount } = await client.query("SELECT 1 FROM teams WHERE id = $1 AND archived_at IS NULL", [input.teamId]);
-      if (!rowCount) throw new PeopleError("Choose a current team.");
-    }
     if (input.expiresOn && input.expiresOn < day) throw new PeopleError("The last day has already passed.");
     const live = input.publishOn <= day;
     const values = [input.title, input.body, input.teamId, input.publishOn, input.expiresOn, input.pinned, input.needsAcknowledgement];
-    let notified = false;
+    let id = input.id;
+    let version = 1;
+    let reannounce = false;
+    let retract = false;
     if (input.id) {
-      const { rows } = await client.query<{ title: string; body: string; teamId: string | null; notified: boolean; acknowledged: boolean }>(
-        `SELECT title, body, team_id AS "teamId", notified_at IS NOT NULL AS notified, EXISTS (SELECT 1 FROM announcement_acknowledgements k WHERE k.announcement_id = id) AS acknowledged
+      const { rows } = await client.query<{ title: string; body: string; teamId: string | null; publishOn: string; expiresOn: string | null; needsAcknowledgement: boolean; notified: boolean; acknowledged: boolean; version: number }>(
+        `SELECT title, body, team_id AS "teamId", to_char(publish_on, 'YYYY-MM-DD') AS "publishOn", to_char(expires_on, 'YYYY-MM-DD') AS "expiresOn",
+         needs_acknowledgement AS "needsAcknowledgement", notified_at IS NOT NULL AS notified,
+         EXISTS (SELECT 1 FROM announcement_acknowledgements k WHERE k.announcement_id = announcements.id) AS acknowledged, version
          FROM announcements WHERE id = $1 AND version = $2 AND removed_at IS NULL`, [input.id, input.version],
       );
       if (!rows[0]) throw new PeopleError("This announcement changed while you were editing. Reload it and try again.");
       if (rows[0].acknowledged && (rows[0].title !== input.title || rows[0].body !== input.body)) throw new PeopleError("People have already acknowledged this text. Remove it and publish a new announcement instead.");
-      notified = rows[0].notified && rows[0].teamId === input.teamId;
+      if (input.teamId) {
+        const { rowCount } = await client.query("SELECT 1 FROM teams WHERE id = $1 AND (archived_at IS NULL OR $2::uuid = $1)", [input.teamId, rows[0].teamId]);
+        if (!rowCount) throw new PeopleError("Choose a current team.");
+      }
+      id = input.id;
+      version = rows[0].version + 1;
+      const changed = rows[0].title !== input.title || rows[0].body !== input.body || rows[0].teamId !== input.teamId || rows[0].needsAcknowledgement !== input.needsAcknowledgement;
+      const wasVisible = rows[0].publishOn <= day && (!rows[0].expiresOn || rows[0].expiresOn >= day);
+      const isVisible = live && (!input.expiresOn || input.expiresOn >= day);
+      retract = rows[0].notified && (!isVisible || changed || wasVisible !== isVisible);
+      reannounce = isVisible && (!rows[0].notified || retract);
       await client.query(
-        `UPDATE announcements SET title = $2, body = $3, team_id = $4, publish_on = $5, expires_on = $6, pinned = $7, needs_acknowledgement = $8, version = version + 1,
-         notified_at = CASE WHEN $9 THEN coalesce(notified_at, now()) END WHERE id = $1`, [input.id, ...values, live],
+        `UPDATE announcements SET title = $2, body = $3, team_id = $4, publish_on = $5, expires_on = $6, pinned = $7, needs_acknowledgement = $8, version = $9,
+         notified_at = CASE WHEN $10 THEN coalesce(notified_at, now()) ELSE NULL END WHERE id = $1`, [input.id, ...values, version, isVisible],
       );
-    } else await client.query(
-      `INSERT INTO announcements (title, body, team_id, publish_on, expires_on, pinned, needs_acknowledgement, created_by, notified_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CASE WHEN $9 THEN now() END)`, [...values, member.id, live],
-    );
+    } else {
+      if (input.teamId) {
+        const { rowCount } = await client.query("SELECT 1 FROM teams WHERE id = $1 AND archived_at IS NULL", [input.teamId]);
+        if (!rowCount) throw new PeopleError("Choose a current team.");
+      }
+      const { rows } = await client.query<{ id: string; version: number }>(
+        `INSERT INTO announcements (title, body, team_id, publish_on, expires_on, pinned, needs_acknowledgement, created_by, notified_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CASE WHEN $9 THEN now() END) RETURNING id, version`, [...values, member.id, live],
+      );
+      id = rows[0].id;
+      version = rows[0].version;
+      reannounce = live;
+    }
+    if (!id) throw new PeopleError("The announcement could not be saved.");
     await audit(client, member, input.id ? "announcement.updated" : "announcement.published", { teamId: input.teamId ?? undefined, detail: input.title });
-    if (live && !notified) await announce(client, member, input);
+    if (retract) await retractSource(client, { kind: "announcement", id });
+    if (reannounce) await announce(client, member, { id, version, title: input.title, teamId: input.teamId, needsAcknowledgement: input.needsAcknowledgement });
   });
 }
 
@@ -94,6 +123,7 @@ export function removeAnnouncement(member: Member, id: string) {
   return runAsAdmin(member, async (client) => {
     const { rows } = await client.query<{ title: string }>("UPDATE announcements SET removed_at = now(), version = version + 1 WHERE id = $1 AND removed_at IS NULL RETURNING title", [id]);
     if (!rows[0]) throw new PeopleError("This announcement was already removed.");
+    await retractSource(client, { kind: "announcement", id }, "announcement removed");
     await audit(client, member, "announcement.removed", { detail: rows[0].title });
   });
 }
@@ -108,9 +138,9 @@ export function acknowledgeAnnouncement(member: Member, id: string) {
 }
 
 export async function notifyScheduled(client: PoolClient, day = today()) {
-  const { rows } = await client.query<{ title: string; teamId: string | null; needsAcknowledgement: boolean }>(
+  const { rows } = await client.query<{ id: string; version: number; title: string; teamId: string | null; needsAcknowledgement: boolean }>(
     `UPDATE announcements SET notified_at = now() WHERE notified_at IS NULL AND removed_at IS NULL AND publish_on <= $1 AND (expires_on IS NULL OR expires_on >= $1)
-     RETURNING title, team_id AS "teamId", needs_acknowledgement AS "needsAcknowledgement"`, [day],
+     RETURNING id::text, version, title, team_id AS "teamId", needs_acknowledgement AS "needsAcknowledgement"`, [day],
   );
   for (const announcement of rows) await announce(client, null, announcement);
 }

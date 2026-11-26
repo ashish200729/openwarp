@@ -8,7 +8,7 @@ import { testEmailAction } from "./actions";
 
 export const metadata: Metadata = { title: "Email" };
 
-const states = { queued: ["Waiting", "text-amber"], sent: ["Sent", "text-positive"], failed: ["Failed", "text-danger"] } as const;
+const states = { queued: ["Waiting", "text-amber"], sent: ["Sent", "text-positive"], failed: ["Failed", "text-danger"], cancelled: ["Suppressed", "text-muted"] } as const;
 
 export default async function EmailPage() {
   const member = await requireAdmin();
