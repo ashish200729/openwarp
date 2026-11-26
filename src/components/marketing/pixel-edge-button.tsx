@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 // worn print. On hover a brighter band of pixels travels around the edge.
 
 const pitch = 2;
-const falloff = [0.5, 0.2, 0.075, 0.025];
+const falloff = [0.36, 0.12, 0.04, 0.012];
 const lapTime = 2400;
 const frameTime = 1000 / 30;
 const cornerCells = 3.5;
@@ -86,11 +86,11 @@ export function PixelEdgeButton({ href, children, className }: { href: string; c
 
           const along = depth === y ? x : depth === columns - 1 - x ? columns + y : depth === rows - 1 - y ? columns + rows + (columns - x) : 2 * columns + rows + (rows - y);
           const position = along / perimeter;
-          const gather = 0.15 + 1.7 * noise(position) ** 2;
-          const corner = cornerX < 7 && cornerY < 7 ? 1.5 : 1;
+          const gather = 0.04 + 2 * noise(position) ** 2.4;
+          const corner = cornerX < 7 && cornerY < 7 ? 1.7 : 1;
           const distance = Math.min(Math.abs(position - band), 1 - Math.abs(position - band));
           const glow = energy * Math.exp(-((distance / 0.07) ** 2));
-          const density = falloff[depth] * gather * corner * (1 + 0.45 * energy + 2.4 * glow + pulse * 1.2);
+          const density = falloff[depth] * gather * corner * (1 + 0.6 * energy + 3 * glow + pulse * 1.4);
           const salt = glow > 0.04 || pulse > 0.04 ? twinkle : 0;
           if (hash(x, y, seed + salt) >= density) continue;
 
@@ -101,7 +101,7 @@ export function PixelEdgeButton({ href, children, className }: { href: string; c
             context!.globalAlpha = Math.min(0.7 + 0.3 * glow, 1);
           } else {
             context!.fillStyle = colors.ink;
-            context!.globalAlpha = Math.min((0.16 + 0.2 * (1 - depth / falloff.length)) * (1 + glow + pulse * 0.5), 0.85);
+            context!.globalAlpha = Math.min((0.14 + 0.2 * (1 - depth / falloff.length)) * (1 + 1.2 * glow + pulse * 0.5), 0.85);
           }
           context!.fillRect(offsetX + x * pitch + inset, offsetY + y * pitch + inset, size, size);
         }

@@ -28,23 +28,24 @@
   --primary-ink: light-dark(#ffffff, #171715);
   --accent: light-dark(#0560b8, #6fb5f7);
   --signal: light-dark(#0b78dd, #3f9bf0);
-  --crest: light-dark(#171715, #f1f1ee);
+  /* The bright edge of the digit field: deep blue on light pages, near white on dark ones. */
+  --crest: light-dark(#0a4f94, #f1f1ee);
   --positive: light-dark(#1a7340, #6cc891);
   --amber: light-dark(#955100, #e8ad57);
   --danger: light-dark(#b92b23, #f58e86);
   --shadow-tint: light-dark(rgb(23 23 21 / 0.08), rgb(0 0 0 / 0.45));
   --shadow-deep: light-dark(rgb(23 23 21 / 0.16), rgb(0 0 0 / 0.6));
-  /* Command blocks stay dark in both themes. */
-  --term: light-dark(#161615, #0c0c0b);
-  --term-edge: light-dark(#161615, #2b2b29);
-  --term-line: #2a2a28;
-  --term-hover: #2a2a28;
-  --term-ink: #ecece8;
-  --term-muted: #a3a39d;
-  --term-key: #8cc4f8;
-  --term-sub: #e8b468;
-  --term-string: #93d6ab;
-  --term-ok: #6cc891;
+  /* Command blocks: a soft paper surface in the light theme, a deep panel in the dark one. */
+  --term: light-dark(#f7f7f5, #0c0c0b);
+  --term-edge: light-dark(#e3e3de, #2b2b29);
+  --term-line: light-dark(#e3e3de, #2a2a28);
+  --term-hover: light-dark(#ebebe7, #2a2a28);
+  --term-ink: light-dark(#171715, #ecece8);
+  --term-muted: light-dark(#5b5b56, #a3a39d);
+  --term-key: light-dark(#0560b8, #8cc4f8);
+  --term-sub: light-dark(#8a4b00, #e8b468);
+  --term-string: light-dark(#1a7340, #93d6ab);
+  --term-ok: light-dark(#1a7340, #6cc891);
 }
 
 @theme inline {
@@ -105,7 +106,7 @@
 
 @layer components {
   .hero-field { mask-image: linear-gradient(#000 72%, transparent); }
-  .closing-field { mask-image: linear-gradient(transparent, #000 45%); }
+  .closing-field { mask-image: linear-gradient(transparent, #000 40%, #000 82%, transparent); }
   /* The header button's edge pixels. Its fill is dark in the light theme and light in the dark theme. */
   .pixel-edge {
     color: var(--primary-ink);
