@@ -1,11 +1,26 @@
 "use server";
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import type { ActionState } from "@/components/workspace/action-state";
-import { accountCommandFields, accountFields, accountLinkFields } from "@/lib/operations";
+import { accountCommandFields, accountFields, accountLinkFields, decisionFields, timeOffFields, timeOffTypeFields } from "@/lib/operations";
 import { createAccount, linkAccount, resetAccount, setAccountRole } from "@/lib/server/accounts";
-import { requireAdmin } from "@/lib/server/member";
+import { requireAdmin, requireMember } from "@/lib/server/member";
+import { saveTimeOffType } from "@/lib/server/settings";
+import { decideTimeOff, requestTimeOff } from "@/lib/server/time-off";
 import { perform } from "@/lib/server/perform";
 import { failed, invalid } from "@/lib/server/write";
+
+export async function requestTimeOffAction(_state: ActionState, data: FormData) {
+  return perform(requireMember, timeOffFields, data, async (member, input) => { await requestTimeOff(member, input); return { redirect: "/workspace/time-off?saved=requested" }; });
+}
+
+export async function decideTimeOffAction(_state: ActionState, data: FormData) {
+  return perform(requireMember, decisionFields, data, (member, input) => decideTimeOff(member, input));
+}
+
+export async function saveTimeOffTypeAction(_state: ActionState, data: FormData) {
+  return perform(requireAdmin, timeOffTypeFields, data, (member, input) => saveTimeOffType(member, input));
+}
 
 export type AccountState = ActionState & { password?: string; email?: string };
 
