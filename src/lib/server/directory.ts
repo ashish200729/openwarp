@@ -136,8 +136,8 @@ export function activityCursor(value: unknown) {
 export async function listActivity({ before = null, employeeId = null, size = 20 }: { before?: string | null; employeeId?: string | null; size?: number } = {}) {
   await requireAdmin();
   const { rows } = await pool().query<Activity>(
-    `SELECT a.id::text, a.event, u.name AS actor, a.employee_id AS "employeeId",
-     coalesce(e.first_name || ' ' || e.last_name, t.name, s.name, '') AS subject, a.detail, a.created_at AS at
+    `SELECT a.id::text, a.event, coalesce(a.actor_name, u.name) AS actor, a.employee_id AS "employeeId",
+     coalesce(a.subject_name, e.first_name || ' ' || e.last_name, t.name, s.name, '') AS subject, a.detail, a.created_at AS at
      FROM activity_log a LEFT JOIN "user" u ON u.id = a.actor_id LEFT JOIN employees e ON e.id = a.employee_id
      LEFT JOIN teams t ON t.id = a.team_id LEFT JOIN "user" s ON s.id = a.subject_user_id
      WHERE ($1::bigint IS NULL OR a.id < $1) AND ($2::uuid IS NULL OR a.employee_id = $2)

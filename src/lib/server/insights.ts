@@ -102,9 +102,9 @@ export async function searchWorkspace(member: Member, query: string) {
 export type ActivityFilters = { person: string; actor: string; group: string; from: string; to: string };
 export const activityGroups = [...new Set(Object.keys(activityLabels).map((event) => event.split(".")[0]))].sort().map((value) => ({ value, label: value[0].toUpperCase() + value.slice(1).replaceAll("_", " ") }));
 
-const activityColumns = `a.id::text, a.event, u.name AS actor, a.employee_id AS "employeeId", coalesce(e.first_name || ' ' || e.last_name, t.name, s.name, '') AS subject, a.detail, a.created_at AS at
+const activityColumns = `a.id::text, a.event, coalesce(a.actor_name, u.name) AS actor, a.employee_id AS "employeeId", coalesce(a.subject_name, e.first_name || ' ' || e.last_name, t.name, s.name, '') AS subject, a.detail, a.created_at AS at
   FROM activity_log a LEFT JOIN "user" u ON u.id = a.actor_id LEFT JOIN employees e ON e.id = a.employee_id LEFT JOIN teams t ON t.id = a.team_id LEFT JOIN "user" s ON s.id = a.subject_user_id`;
-const activityWhere = `($1 = '' OR strpos(lower(concat_ws(' ', e.first_name, e.last_name, s.name)), lower($1)) > 0) AND ($2 = '' OR a.actor_id = $2) AND ($3 = '' OR split_part(a.event, '.', 1) = $3)
+const activityWhere = `($1 = '' OR strpos(lower(concat_ws(' ', a.subject_name, e.first_name, e.last_name, t.name, s.name)), lower($1)) > 0) AND ($2 = '' OR a.actor_id = $2) AND ($3 = '' OR split_part(a.event, '.', 1) = $3)
   AND ($4 = '' OR a.created_at >= NULLIF($4, '')::date) AND ($5 = '' OR a.created_at < NULLIF($5, '')::date + 1)`;
 const activityValues = (filters: ActivityFilters) => [filters.person, filters.actor, filters.group, filters.from, filters.to];
 
