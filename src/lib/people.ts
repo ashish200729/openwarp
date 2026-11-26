@@ -14,11 +14,6 @@ export const employmentLabels: Record<EmploymentType, string> = {
   full_time: "Full-time", part_time: "Part-time", contractor: "Contractor", intern: "Intern",
 };
 
-export const workflowTemplates: Record<WorkflowKind, readonly string[]> = {
-  onboarding: ["Confirm start date and manager", "Prepare equipment and accounts", "Share the first-week plan", "Complete the welcome check-in"],
-  offboarding: ["Confirm handover and owners", "Collect company equipment", "Remove access to company systems", "Complete the departure check-in"],
-};
-
 const optionalId = z.union([z.uuid(), z.literal("")]).transform((value) => value || null);
 const workDate = z.iso.date().refine((value) => value >= "1900-01-01" && value <= "9999-12-31", "Enter a valid work date.");
 

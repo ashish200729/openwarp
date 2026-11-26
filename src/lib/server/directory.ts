@@ -1,5 +1,6 @@
 import "server-only";
 import { type EmployeeFilters, type EmployeeStatus, type EmploymentType, type WorkflowKind } from "@/lib/people";
+import { activityLabels, type ActivityEvent } from "@/lib/activity";
 import { pool } from "./db";
 import { requireAdmin, type Member, type Role } from "./member";
 
@@ -11,7 +12,7 @@ export type Employee = {
 };
 export type Team = { id: string; name: string; version: number; people: number };
 export type Workflow = { id: string; kind: WorkflowKind; state: "open" | "completed" | "cancelled"; openedAt: Date; closedAt: Date | null };
-export type Task = { id: string; title: string; completedAt: Date | null; completedBy: string | null };
+export type Task = { id: string; title: string; completedAt: Date | null; completedBy: string | null; dueOn: string | null; assignee: string | null };
 export type OpenWorkflow = Workflow & { employeeId: string; employeeName: string; title: string; targetDate: string; completed: number; total: number };
 
 export const employeeColumns = `
@@ -42,7 +43,7 @@ export async function listEmployees(member: Member, filters: EmployeeFilters, si
 
 export async function employeeProfile(member: Member, id: string) {
   const { rows } = await pool().query<Employee>(
-    `SELECT ${employeeColumns} ${employeeFrom} WHERE e.id = $1 AND ($2 = 'admin' OR e.status = 'active')`, [id, member.role],
+    `SELECT ${employeeColumns} ${employeeFrom} WHERE e.id = $1 AND ($2 = 'admin' OR e.status = 'active' OR e.id = $3 AND e.status <> 'archived')`, [id, member.role, member.employeeId],
   );
   if (!rows[0]) return null;
   const employee = rows[0];
@@ -68,8 +69,8 @@ export async function employeeProfile(member: Member, id: string) {
   ]);
   const open = workflows.rows.find((workflow) => workflow.state === "open");
   const tasks = open ? (await pool().query<Task>(
-    `SELECT t.id, t.title, t.completed_at AS "completedAt", u.name AS "completedBy"
-     FROM workflow_tasks t LEFT JOIN "user" u ON u.id = t.completed_by WHERE t.workflow_id = $1 ORDER BY t.position`, [open.id],
+    `SELECT t.id, t.title, t.completed_at AS "completedAt", u.name AS "completedBy", to_char(t.due_on, 'YYYY-MM-DD') AS "dueOn", a.name AS assignee
+     FROM workflow_tasks t LEFT JOIN "user" u ON u.id = t.completed_by LEFT JOIN "user" a ON a.id = t.assignee_id WHERE t.workflow_id = $1 ORDER BY t.position`, [open.id],
   )).rows : [];
   return { employee, reports: reports.rows, managers: managers.rows, workflows: workflows.rows, open, tasks };
 }
@@ -78,7 +79,7 @@ export async function listTeams(member: Member) {
   const { rows } = await pool().query<Team>(
     `SELECT t.id, t.name, t.version, count(e.id)::int AS people
      FROM teams t LEFT JOIN employees e ON e.team_id = t.id AND ($1 = 'admin' AND e.status <> 'archived' OR e.status = 'active')
-     GROUP BY t.id ORDER BY lower(t.name), t.id`, [member.role],
+     WHERE t.archived_at IS NULL GROUP BY t.id ORDER BY lower(t.name), t.id`, [member.role],
   );
   return rows;
 }
@@ -125,14 +126,7 @@ export async function listOpenWorkflows(page: number) {
   return { workflows: rows, total, page: current, pages };
 }
 
-export const activityLabels = {
-  "employee.created": "Added an employee", "employee.updated": "Updated an employee", "employee.exported": "Exported the directory",
-  "team.created": "Created a team", "team.updated": "Renamed a team", "workflow.started": "Started a checklist",
-  "workflow.completed": "Completed a checklist", "workflow.cancelled": "Cancelled a checklist", "task.completed": "Completed a task",
-  "task.reopened": "Reopened a task", "account.created": "Created an account", "account.role_changed": "Changed workspace access",
-  "account.password_reset": "Reset an account password",
-} as const;
-export type ActivityEvent = keyof typeof activityLabels;
+export { activityLabels, type ActivityEvent };
 export type Activity = { id: string; event: ActivityEvent; actor: string | null; subject: string; employeeId: string | null; detail: string; at: Date };
 
 export function activityCursor(value: unknown) {

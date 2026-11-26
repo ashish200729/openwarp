@@ -2,10 +2,10 @@
 
 import Link from "next/link";
 import { useActionState, useId, useState, type ReactNode } from "react";
-import { Save } from "lucide-react";
-import { ButtonPixels, inputStyle, panelStyle, primaryButton, secondaryButton } from "@/components/ui";
+import { inputStyle, secondaryButton } from "@/components/ui";
 import { employmentLabels, employmentTypes } from "@/lib/people";
 import { FormError, type ActionState } from "./action-state";
+import { SubmitButton } from "./buttons";
 
 export type EmployeeFormValues = {
   firstName: string; lastName: string; email: string; title: string; teamId: string; managerId: string;
@@ -51,21 +51,21 @@ export function EmployeeForm({ action, profile, initial, teams, managers }: Form
   }
 
   return (
-    <form action={submit} onReset={(event) => event.preventDefault()} className="max-w-4xl space-y-5" aria-busy={pending}>
+    <form action={submit} onReset={(event) => event.preventDefault()} className="max-w-3xl space-y-8" aria-busy={pending}>
       {profile && <><input name="id" type="hidden" value={profile.id} /><input name="version" type="hidden" value={profile.version} /></>}
       <FormError error={state.error} />
-      <section className={`${panelStyle} p-5 sm:p-6`}>
-        <h2 className="text-lg font-medium tracking-tight">Employee details</h2>
-        <div className="mt-5 grid gap-4 sm:grid-cols-2">
+      <section >
+        <h2 className="border-b border-line pb-2 text-[15px] font-semibold">Employee details</h2>
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
           {field("firstName", "First name", { required: true, maxLength: 80 })}
           {field("lastName", "Last name", { required: true, maxLength: 80 })}
           {field("email", "Work email", { required: true, type: "email", maxLength: 254, autoComplete: "off" })}
           {field("location", "Work location", { maxLength: 100, autoComplete: "off" })}
         </div>
       </section>
-      <section className={`${panelStyle} p-5 sm:p-6`}>
-        <h2 className="text-lg font-medium tracking-tight">Employment</h2>
-        <div className="mt-5 grid gap-4 sm:grid-cols-2">
+      <section >
+        <h2 className="border-b border-line pb-2 text-[15px] font-semibold">Employment</h2>
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
           {field("title", "Job title", { required: true, maxLength: 120 })}
           {field("employmentType", "Employment type", { required: true, options: employmentTypes.map((type) => <option key={type} value={type}>{employmentLabels[type]}</option>) })}
           {field("teamId", "Team", { options: <><option value="">No team</option>{teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</> })}
@@ -79,7 +79,7 @@ export function EmployeeForm({ action, profile, initial, teams, managers }: Form
         </div>
       </section>
       <div className="flex flex-wrap gap-2.5">
-        <button type="submit" className={primaryButton} disabled={pending}><ButtonPixels />{pending ? "Saving…" : profile ? "Save changes" : "Add employee"}<Save aria-hidden="true" size={15} /></button>
+        <SubmitButton pending="Saving…">{profile ? "Save changes" : "Add employee"}</SubmitButton>
         <Link href={cancelHref} className={secondaryButton}>Cancel</Link>
       </div>
     </form>

@@ -2,30 +2,12 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { z } from "zod";
 import { createEmployeeFields, editEmployeeFields, employeeVersionFields, rehireFields, startOffboardingFields, taskCommandFields, teamNameField, workflowCommandFields } from "@/lib/people";
 import { requireAdmin } from "@/lib/server/member";
-import { closeWorkflow, createEmployee, PeopleError, rehireEmployee, saveTeam, setTask, startOffboarding, updateEmployee } from "@/lib/server/people-mutations";
+import { archiveTeam, closeWorkflow, createEmployee, rehireEmployee, saveTeam, setTask, startOffboarding, updateEmployee } from "@/lib/server/people-mutations";
+import { perform } from "@/lib/server/perform";
+import { failed, invalid } from "@/lib/server/write";
 import type { ActionState } from "@/components/workspace/action-state";
-
-function invalid(error: z.ZodError): ActionState {
-  const fields = z.flattenError(error).fieldErrors as Record<string, string[]>;
-  return { error: "Check the highlighted fields and try again.", fields };
-}
-
-function failed(error: unknown): ActionState {
-  if (error instanceof PeopleError) return { error: error.message };
-  const databaseError = typeof error === "object" && error ? error as { code?: string; constraint?: string } : {};
-  if (databaseError.code === "23505" && databaseError.constraint === "employees_email_unique") {
-    return { error: "That work email is already in the directory.", fields: { email: ["Use a unique work email."] } };
-  }
-  if (databaseError.code === "23505" && databaseError.constraint === "teams_name_unique") {
-    return { error: "That team name already exists.", fields: { name: ["Choose a different name."] } };
-  }
-  if (databaseError.code === "23503") return { error: "A selected record changed. Reload the page and try again." };
-  console.error("OpenWarp could not save a change", databaseError.code ?? (error instanceof Error ? error.name : "unknown"));
-  return { error: "We couldn’t save your changes. Try again in a moment." };
-}
 
 export async function saveEmployeeAction(mode: "create" | "edit", _previous: ActionState, formData: FormData): Promise<ActionState> {
   const member = await requireAdmin();
@@ -115,4 +97,8 @@ export async function saveTeamAction(_previous: ActionState, formData: FormData)
   }
   revalidatePath("/workspace", "layout");
   redirect(`/workspace/teams?saved=${existing ? "renamed" : "created"}`);
+}
+
+export async function archiveTeamAction(_previous: ActionState, formData: FormData): Promise<ActionState> {
+  return perform(requireAdmin, employeeVersionFields.pick({ id: true }), formData, (member, { id }) => archiveTeam(member, id));
 }

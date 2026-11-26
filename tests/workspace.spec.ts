@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
+import { signIn as submitSignIn } from "./support";
 
 const adminEmail = "admin@openwarp.example";
 const viewerEmail = "viewer@openwarp.example";
@@ -8,10 +9,7 @@ const viewerPassword = process.env.OPENWARP_E2E_VIEWER_PASSWORD;
 if (!adminPassword || !viewerPassword) throw new Error("Run npm run verify:e2e to provision the disposable test workspace.");
 
 async function signIn(page: Page, email: string, password: string) {
-  await page.goto("/login");
-  await page.getByLabel("Work email").fill(email);
-  await page.getByLabel("Password", { exact: true }).fill(password);
-  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await submitSignIn(page, email, password);
   await expect(page.getByRole("heading", { name: "People overview" })).toBeVisible();
 }
 
@@ -99,6 +97,7 @@ test("the color theme follows the system, switches, and persists, and the mobile
 });
 
 test("administrators manage a complete employee lifecycle and viewers see only active work records", async ({ page, browser, request, baseURL }) => {
+  test.setTimeout(260_000);
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto("/workspace/people");
   await expect(page).toHaveURL(/\/login$/);
@@ -111,6 +110,18 @@ test("administrators manage a complete employee lifecycle and viewers see only a
   await page.getByLabel("Team name").fill("Studio Systems");
   await page.getByRole("button", { name: "Create team" }).click();
   await expect(page.getByRole("heading", { name: "Studio Systems" })).toBeVisible();
+  const draft = await page.context().newPage();
+  await openEmployeeForm(draft, { first: "Test", last: "Transfer", email: "transfer@openwarp.example", team: "Studio Systems" });
+  await page.getByRole("button", { name: "Archive Studio Systems" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Archive team" }).click();
+  await expect(page.getByRole("heading", { name: "Studio Systems" })).toHaveCount(0);
+  expect(await (await page.request.get("/workspace/search?q=Studio%20Systems")).json()).toEqual([]);
+  await draft.getByRole("button", { name: "Add employee" }).click();
+  await expect(draft.getByRole("main").getByRole("alert")).toContainText("Choose a current team.");
+  await draft.close();
+  await page.getByRole("link", { name: "Create team" }).click();
+  await page.getByLabel("Team name").fill("Studio Systems");
+  await page.getByRole("button", { name: "Create team" }).click();
   await page.getByRole("link", { name: "Rename Studio Systems" }).click();
   await page.getByLabel("Team name").fill("Systems Engineering");
   await page.getByRole("button", { name: "Save name" }).click();
@@ -202,6 +213,7 @@ test("administrators manage a complete employee lifecycle and viewers see only a
   await expect(page.getByRole("heading", { name: "Offboarding checklist" })).toBeVisible();
   await completeTasks(page);
   await page.getByRole("button", { name: "Archive profile" }).click();
+  await page.getByRole("button", { name: "Archive now" }).click();
   await expect(page.getByRole("main").getByRole("alert")).toContainText("Reassign this employee’s direct reports");
   await page.goto(`${joiner}/edit`);
   await page.getByLabel("Manager").selectOption("");
@@ -209,12 +221,14 @@ test("administrators manage a complete employee lifecycle and viewers see only a
   await expect(page.getByText("No manager listed.")).toBeVisible();
   await page.goto(lead);
   await page.getByRole("button", { name: "Archive profile" }).click();
+  await page.getByRole("button", { name: "Archive now" }).click();
   await expect(page.getByRole("link", { name: "Restart onboarding" })).toBeVisible();
   await page.getByRole("link", { name: "Restart onboarding" }).click();
   await page.getByLabel("New start date").fill("2026-12-08");
   await page.getByRole("button", { name: "Restart onboarding" }).click();
   await expect(page.locator("#checklist").getByRole("meter")).toHaveAttribute("aria-valuenow", "0");
   await page.getByRole("button", { name: "Cancel onboarding and archive" }).click();
+  await page.getByRole("button", { name: "Cancel and archive" }).click();
   await expect(page.getByRole("link", { name: "Restart onboarding" })).toBeVisible();
 
   await page.goto("/workspace/people?status=archived");

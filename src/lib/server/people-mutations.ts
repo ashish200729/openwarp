@@ -1,26 +1,12 @@
 import "server-only";
 import type { PoolClient } from "pg";
-import { statusLabels, workflowTemplates, type EmployeeFilters, type EmployeeInput, type EmployeeStatus, type WorkflowKind } from "@/lib/people";
-import { transaction } from "./db";
-import { employeeColumns, employeeFilterValues, employeeFrom, employeeOrder, employeeWhere, type ActivityEvent, type Employee } from "./directory";
+import { statusLabels, type EmployeeFilters, type EmployeeInput, type EmployeeStatus, type WorkflowKind } from "@/lib/people";
+import { employeeColumns, employeeFilterValues, employeeFrom, employeeOrder, employeeWhere, type Employee } from "./directory";
 import type { Member } from "./member";
+import { archiveBlockers, onOffboarding, onOnboarding } from "./modules";
+import { audit, PeopleError, runAsAdmin } from "./write";
 
-export class PeopleError extends Error {}
-
-async function runAsAdmin<T>(member: Member, run: (client: PoolClient) => Promise<T>) {
-  return transaction(async (client) => {
-    // Serialize reporting-line changes and role grants with the same transaction lock.
-    await client.query("SELECT pg_advisory_xact_lock(142050, 2)");
-    const { rowCount } = await client.query("SELECT 1 FROM workspace_members WHERE user_id = $1 AND role = 'admin'", [member.id]);
-    if (!rowCount) throw new PeopleError("Administrator access is required.");
-    return run(client);
-  });
-}
-
-async function audit(client: PoolClient, member: Member, event: ActivityEvent, options: { employeeId?: string; teamId?: string; detail?: string } = {}) {
-  const { employeeId = null, teamId = null, detail = "" } = options;
-  await client.query("INSERT INTO activity_log (actor_id, event, employee_id, team_id, detail) VALUES ($1, $2, $3, $4, $5)", [member.id, event, employeeId, teamId, detail]);
-}
+export { PeopleError };
 
 async function currentEmployee(client: PoolClient, id: string, version?: number) {
   const { rows } = await client.query<{ version: number; status: EmployeeStatus; managerId: string | null; hireDate: string; lastDay: string | null }>(
@@ -31,6 +17,12 @@ async function currentEmployee(client: PoolClient, id: string, version?: number)
   if (!employee) throw new PeopleError("This employee could not be found.");
   if (version !== undefined && employee.version !== version) throw new PeopleError("This profile changed while you were editing. Reload it and try again.");
   return employee;
+}
+
+async function ensureCurrentTeam(client: PoolClient, teamId: string | null) {
+  if (!teamId) return;
+  const { rowCount } = await client.query("SELECT 1 FROM teams WHERE id = $1 AND archived_at IS NULL", [teamId]);
+  if (!rowCount) throw new PeopleError("Choose a current team.");
 }
 
 async function ensureManager(client: PoolClient, managerId: string | null, employeeId: string | null = null) {
@@ -50,10 +42,38 @@ async function ensureManager(client: PoolClient, managerId: string | null, emplo
 async function startWorkflow(client: PoolClient, member: Member, employeeId: string, kind: WorkflowKind) {
   const { rows: [workflow] } = await client.query<{ id: string }>("INSERT INTO employee_workflows (employee_id, kind) VALUES ($1, $2) RETURNING id", [employeeId, kind]);
   await client.query(
-    "INSERT INTO workflow_tasks (workflow_id, title, position) SELECT $1, title, ordinal FROM unnest($2::text[]) WITH ORDINALITY AS task(title, ordinal)",
-    [workflow.id, workflowTemplates[kind]],
+    "INSERT INTO workflow_tasks (workflow_id, title, position) SELECT $1, title, row_number() OVER (ORDER BY position, id) FROM checklist_templates WHERE kind = $2",
+    [workflow.id, kind],
   );
   await audit(client, member, "workflow.started", { employeeId, detail: statusLabels[kind] });
+  await (kind === "onboarding" ? onOnboarding : onOffboarding)(client, member, employeeId);
+}
+
+// Job history keeps names as text, so later renames don't rewrite what was true at the time.
+async function recordJob(client: PoolClient, employeeId: string, changedOn: string | null = null) {
+  await client.query(
+    `INSERT INTO job_changes (employee_id, title, team_name, manager_name, employment_type, changed_on)
+     SELECT e.id, e.title, coalesce(t.name, ''), concat_ws(' ', m.first_name, m.last_name), e.employment_type, coalesce($2::date, current_date)
+     FROM employees e LEFT JOIN teams t ON t.id = e.team_id LEFT JOIN employees m ON m.id = e.manager_id
+     WHERE e.id = $1 AND NOT EXISTS (
+       SELECT 1 FROM (SELECT * FROM job_changes WHERE employee_id = $1 ORDER BY id DESC LIMIT 1) last
+       WHERE last.title = e.title AND last.team_name = coalesce(t.name, '') AND last.manager_name = concat_ws(' ', m.first_name, m.last_name) AND last.employment_type = e.employment_type
+     )`, [employeeId, changedOn],
+  );
+}
+
+export async function insertEmployee(client: PoolClient, member: Member, input: EmployeeInput & { initialStatus: "onboarding" | "active" }) {
+  await ensureCurrentTeam(client, input.teamId);
+  await ensureManager(client, input.managerId);
+  const { rows: [employee] } = await client.query<{ id: string }>(
+    `INSERT INTO employees (first_name, last_name, email, title, team_id, manager_id, employment_type, hire_date, location, status)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`, [...employeeValues(input), input.initialStatus],
+  );
+  await recordJob(client, employee.id, input.hireDate);
+  await client.query(`UPDATE workspace_members m SET employee_id = $1 FROM "user" u WHERE u.id = m.user_id AND lower(u.email) = $2 AND m.employee_id IS NULL`, [employee.id, input.email]);
+  await audit(client, member, "employee.created", { employeeId: employee.id, detail: statusLabels[input.initialStatus] });
+  if (input.initialStatus === "onboarding") await startWorkflow(client, member, employee.id, "onboarding");
+  return employee.id;
 }
 
 function employeeValues(input: EmployeeInput) {
@@ -61,16 +81,7 @@ function employeeValues(input: EmployeeInput) {
 }
 
 export function createEmployee(member: Member, input: EmployeeInput & { initialStatus: "onboarding" | "active" }) {
-  return runAsAdmin(member, async (client) => {
-    await ensureManager(client, input.managerId);
-    const { rows: [employee] } = await client.query<{ id: string }>(
-      `INSERT INTO employees (first_name, last_name, email, title, team_id, manager_id, employment_type, hire_date, location, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`, [...employeeValues(input), input.initialStatus],
-    );
-    await audit(client, member, "employee.created", { employeeId: employee.id, detail: statusLabels[input.initialStatus] });
-    if (input.initialStatus === "onboarding") await startWorkflow(client, member, employee.id, "onboarding");
-    return employee.id;
-  });
+  return runAsAdmin(member, (client) => insertEmployee(client, member, input));
 }
 
 export function updateEmployee(member: Member, input: EmployeeInput & { id: string; version: number; lastDay: string | null }) {
@@ -81,11 +92,13 @@ export function updateEmployee(member: Member, input: EmployeeInput & { id: stri
     if (employee.status === "offboarding" && (!lastDay || lastDay < input.hireDate)) {
       throw new PeopleError("The last day must be on or after the start date.");
     }
+    await ensureCurrentTeam(client, input.teamId);
     if (input.managerId !== employee.managerId) await ensureManager(client, input.managerId, input.id);
     await client.query(
       `UPDATE employees SET first_name = $1, last_name = $2, email = $3, title = $4, team_id = $5, manager_id = $6, employment_type = $7,
        hire_date = $8, location = $9, last_day = $10, version = version + 1, updated_at = now() WHERE id = $11`, [...employeeValues(input), lastDay, input.id],
     );
+    await recordJob(client, input.id);
     await audit(client, member, "employee.updated", { employeeId: input.id });
   });
 }
@@ -126,6 +139,16 @@ export function setTask(member: Member, input: { id: string; workflowId: string;
   });
 }
 
+async function revokeAccess(client: PoolClient, member: Member, employeeId: string) {
+  const { rows } = await client.query<{ userId: string; role: string }>(`SELECT user_id AS "userId", role FROM workspace_members WHERE employee_id = $1 AND role <> 'disabled'`, [employeeId]);
+  if (!rows[0]) return;
+  const { userId, role } = rows[0];
+  if (userId === member.id) throw new PeopleError("You can’t archive your own profile. Ask another administrator.");
+  await client.query("UPDATE workspace_members SET role = 'disabled' WHERE user_id = $1", [userId]);
+  await client.query('DELETE FROM "session" WHERE "userId" = $1', [userId]);
+  await audit(client, member, "account.role_changed", { subjectUserId: userId, detail: `${role} to disabled` });
+}
+
 export function closeWorkflow(member: Member, input: { id: string; workflowId: string; operation: "complete" | "cancel" }) {
   return runAsAdmin(member, async (client) => {
     const { kind } = await requireOpenWorkflow(client, input);
@@ -138,7 +161,10 @@ export function closeWorkflow(member: Member, input: { id: string; workflowId: s
     if (archive) {
       const { rowCount } = await client.query("SELECT 1 FROM employees WHERE manager_id = $1 AND status <> 'archived' LIMIT 1", [input.id]);
       if (rowCount) throw new PeopleError("Reassign this employee’s direct reports before archiving their profile.");
+      const blockers = await archiveBlockers(client, input.id);
+      if (blockers.length) throw new PeopleError(blockers.join(" "));
     }
+    if (archive) await revokeAccess(client, member, input.id);
     await client.query("UPDATE employee_workflows SET state = $2, closed_at = now() WHERE id = $1", [input.workflowId, complete ? "completed" : "cancelled"]);
     await client.query(
       `UPDATE employees SET status = $2, last_day = CASE WHEN $2 = 'archived' THEN last_day ELSE NULL END,
@@ -155,8 +181,10 @@ export function rehireEmployee(member: Member, input: { id: string; version: num
     if (employee.lastDay && input.hireDate < employee.lastDay) throw new PeopleError("The new start date must be on or after the previous last day.");
     await client.query(
       `UPDATE employees SET status = 'onboarding', hire_date = $2, last_day = NULL, manager_id = NULL,
+       team_id = (SELECT id FROM teams WHERE id = employees.team_id AND archived_at IS NULL),
        version = version + 1, updated_at = now() WHERE id = $1`, [input.id, input.hireDate],
     );
+    await recordJob(client, input.id, input.hireDate);
     await startWorkflow(client, member, input.id, "onboarding");
   });
 }
@@ -164,11 +192,21 @@ export function rehireEmployee(member: Member, input: { id: string; version: num
 export function saveTeam(member: Member, name: string, existing?: { id: string; version: number }) {
   return runAsAdmin(member, async (client) => {
     const { rows } = existing ? await client.query<{ id: string }>(
-      "UPDATE teams SET name = $1, version = version + 1 WHERE id = $2 AND version = $3 RETURNING id", [name, existing.id, existing.version],
+      "UPDATE teams SET name = $1, version = version + 1 WHERE id = $2 AND version = $3 AND archived_at IS NULL RETURNING id", [name, existing.id, existing.version],
     ) : await client.query<{ id: string }>("INSERT INTO teams (name) VALUES ($1) RETURNING id", [name]);
     if (!rows[0]) throw new PeopleError("This team changed while you were editing. Reload it and try again.");
     await audit(client, member, existing ? "team.updated" : "team.created", { teamId: rows[0].id });
     return rows[0].id;
+  });
+}
+
+export function archiveTeam(member: Member, id: string) {
+  return runAsAdmin(member, async (client) => {
+    const { rowCount: used } = await client.query("SELECT 1 FROM employees WHERE team_id = $1 AND status <> 'archived' LIMIT 1", [id]);
+    if (used) throw new PeopleError("Move everyone out of this team before archiving it.");
+    const { rows } = await client.query<{ name: string }>("UPDATE teams SET archived_at = now(), version = version + 1 WHERE id = $1 AND archived_at IS NULL RETURNING name", [id]);
+    if (!rows[0]) throw new PeopleError("This team is already archived.");
+    await audit(client, member, "team.archived", { teamId: id });
   });
 }
 

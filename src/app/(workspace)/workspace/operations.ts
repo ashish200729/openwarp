@@ -1,14 +1,19 @@
 "use server";
+
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import type { ActionState } from "@/components/workspace/action-state";
-import { accountCommandFields, accountFields, accountLinkFields, compensationFields, decisionFields, expenseFields, payRunCommandFields, payRunFields, timeOffFields, timeOffTypeFields } from "@/lib/operations";
+import {
+  accountCommandFields, accountFields, accountLinkFields, companyFields, compensationFields, decisionFields, expenseFields, holidayFields, payRunCommandFields,
+  payRunFields, templateFields, timeOffFields, timeOffTypeFields, workDate,
+} from "@/lib/operations";
 import { createAccount, linkAccount, resetAccount, setAccountRole } from "@/lib/server/accounts";
 import { acknowledgeDocument, archiveDocument, readUpload } from "@/lib/server/documents";
 import { decideExpense, submitExpense } from "@/lib/server/expenses";
+import { planImport, runImport, type ImportProblem } from "@/lib/server/import";
 import { requireAdmin, requireMember } from "@/lib/server/member";
 import { addCompensation, commandPayRun, createPayRun } from "@/lib/server/pay";
-import { saveTimeOffType } from "@/lib/server/settings";
+import { addHoliday, addTemplate, removeHoliday, removeTemplate, saveCompany, saveTimeOffType } from "@/lib/server/settings";
 import { decideTimeOff, requestTimeOff } from "@/lib/server/time-off";
 import { perform } from "@/lib/server/perform";
 import { failed, invalid } from "@/lib/server/write";
@@ -57,8 +62,28 @@ export async function payRunCommandAction(_state: ActionState, data: FormData) {
   });
 }
 
+export async function saveCompanyAction(_state: ActionState, data: FormData) {
+  return perform(requireAdmin, companyFields, data, (member, input) => saveCompany(member, input));
+}
+
 export async function saveTimeOffTypeAction(_state: ActionState, data: FormData) {
   return perform(requireAdmin, timeOffTypeFields, data, (member, input) => saveTimeOffType(member, input));
+}
+
+export async function addHolidayAction(_state: ActionState, data: FormData) {
+  return perform(requireAdmin, holidayFields, data, async (member, input) => { await addHoliday(member, input); return "Holiday added."; });
+}
+
+export async function removeHolidayAction(_state: ActionState, data: FormData) {
+  return perform(requireAdmin, holidayFields.pick({ day: true }).extend({ day: workDate }), data, (member, { day }) => removeHoliday(member, day));
+}
+
+export async function addTemplateAction(_state: ActionState, data: FormData) {
+  return perform(requireAdmin, templateFields, data, async (member, input) => { await addTemplate(member, input); return "Task added."; });
+}
+
+export async function removeTemplateAction(_state: ActionState, data: FormData) {
+  return perform(requireAdmin, decisionFields.pick({ id: true }), data, (member, { id }) => removeTemplate(member, id));
 }
 
 export type AccountState = ActionState & { password?: string; email?: string };
@@ -93,4 +118,25 @@ export async function accountCommandAction(_state: AccountState, data: FormData)
 
 export async function linkAccountAction(_state: ActionState, data: FormData) {
   return perform(requireAdmin, accountLinkFields, data, async (member, input) => { await linkAccount(member, input); return "Link saved."; });
+}
+
+export type ImportState = ActionState & { plan?: { people: number; newTeams: string[]; problems: ImportProblem[] } };
+
+export async function importAction(_state: ImportState, data: FormData): Promise<ImportState> {
+  const member = await requireAdmin();
+  const text = data.get("csv");
+  if (typeof text !== "string" || !text.trim()) return { error: "Choose a CSV file." };
+  if (Buffer.byteLength(text, "utf8") > 1_000_000) return { error: "Choose a file of 1 MB or less." };
+  let imported = 0;
+  try {
+    if (data.get("operation") !== "import") {
+      const { rows, newTeams, problems } = await planImport(text);
+      return { plan: { people: rows.length, newTeams, problems: problems.slice(0, 100) } };
+    }
+    imported = await runImport(member, text);
+  } catch (error) {
+    return failed(error);
+  }
+  revalidatePath("/workspace", "layout");
+  redirect(`/workspace/people?imported=${imported}`);
 }

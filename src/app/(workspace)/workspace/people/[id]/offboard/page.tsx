@@ -18,7 +18,7 @@ export default async function OffboardEmployee({ params }: { params: Promise<{ i
   const { employee } = profile;
   return <>
     <BackLink href={`/workspace/people/${id}`}>{employee.firstName} {employee.lastName}</BackLink>
-    <PageHeader title="Start offboarding" description="Set a last day to open a departure checklist. Reassign direct reports before archiving. If the employee has an OpenWarp login, ask the workspace operator to disable it." />
+    <PageHeader title="Start offboarding" description="Set a last day to open a departure checklist. Reassign direct reports before archiving. Archiving their profile also disables their OpenWarp sign-in." />
     <WorkflowDateForm action={offboardAction} id={id} version={employee.version} kind="offboarding" minimum={employee.hireDate} />
   </>;
 }

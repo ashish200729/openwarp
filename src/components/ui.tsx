@@ -1,4 +1,3 @@
-import type { CSSProperties } from "react";
 import { cn } from "@/lib/utils";
 
 export const buttonStyle = "inline-flex min-h-11 items-center justify-center gap-1.5 whitespace-nowrap rounded-[7px] border px-3.5 text-sm font-medium transition-colors duration-100 motion-reduce:transition-none disabled:cursor-not-allowed disabled:opacity-50 pointer-fine:min-h-9";
@@ -18,19 +17,6 @@ export function Meter({ value, label, color = "var(--signal)" }: { value: number
   return (
     <div role="meter" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} className="h-1.5 overflow-hidden rounded-full bg-raised">
       <div aria-hidden="true" className="h-full rounded-full forced-colors:bg-[CanvasText]!" style={{ width: `${percent}%`, backgroundColor: color }} />
-    </div>
-  );
-}
-
-export function ButtonPixels() {
-  return <span aria-hidden="true" className="pixel-fill mr-0.5 size-3 shrink-0 opacity-65 [--pixel-size:6px] [--pixel:currentColor]" />;
-}
-
-export function PixelMeter({ value, label, color = "var(--accent)" }: { value: number; label: string; color?: string }) {
-  const percent = Math.min(Math.max(value, 0), 100);
-  return (
-    <div role="meter" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} className="relative h-2.5 overflow-hidden rounded-[2px] bg-raised">
-      <div aria-hidden="true" className="pixel-fill h-full [--pixel-base:color-mix(in_srgb,var(--pixel)_18%,transparent)] [--pixel-size:6px]" style={{ width: `${percent}%`, "--pixel": color } as CSSProperties} />
     </div>
   );
 }
