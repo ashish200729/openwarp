@@ -46,7 +46,7 @@ export default async function WorkspaceLayout({ children }: { children: ReactNod
           </div>
         </div>
         <div className="hidden lg:block"><SearchButton /></div>
-        <div className="lg:-mx-1 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:px-1 lg:pb-3"><WorkspaceNavigation canManage={canManage} employeeId={member.employeeId} counts={{ timeOff: timeOff.length, expenses: expenses.length, timesheets }} /></div>
+        <div className="scroll-quiet lg:-mx-1 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:px-1 lg:pb-3"><WorkspaceNavigation canManage={canManage} employeeId={member.employeeId} counts={{ timeOff: timeOff.length, expenses: expenses.length, timesheets }} /></div>
         <div className="hidden border-t border-line pt-2 lg:block">
           <div className="mb-1 flex min-w-0 items-center gap-2.5 px-2.5 py-1">
             <Avatar name={member.name} />

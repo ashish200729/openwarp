@@ -77,7 +77,7 @@ export default function HomePage() {
       <main id="main" tabIndex={-1}>
         {/* The hero runs up under the transparent header (h-14). */}
         <section className="relative isolate -mt-14 overflow-hidden">
-          <HeroField className="hero-field h-[55.5rem]" level={0.37} showControl={false} />
+          <HeroField className="hero-field h-[55.5rem]" level={0.33} showControl={false} />
           <div className={cn(container, "pt-26 pb-14 sm:pt-34 lg:pt-36")}>
             <a href={repositoryUrl} className="group inline-flex min-h-9 items-center gap-2 rounded-full border border-line bg-surface/70 py-1 pr-3 pl-2.5 text-[13px] text-muted backdrop-blur-sm transition-colors hover:border-line-strong hover:text-foreground motion-reduce:transition-none">
               <GithubLogoIcon aria-hidden="true" size={15} weight="fill" className="text-foreground" />
@@ -89,7 +89,7 @@ export default function HomePage() {
             <p className="mt-5 max-w-[46ch] text-lg leading-[1.55] text-pretty text-muted">Directory, time, pay, benefits, documents and devices in one workspace, on a server you control. Open source, with no per-employee fee.</p>
             <div className="mt-8 flex flex-wrap items-center gap-2.5">
               <a href="#self-host" className={cn(primaryButton, largeButton)}>Self-host OpenWarp</a>
-              <a href={repositoryUrl} className={cn(secondaryButton, largeButton)}><GithubLogoIcon aria-hidden="true" size={17} />View the source</a>
+              <a href={repositoryUrl} className={cn(secondaryButton, largeButton)}><GithubLogoIcon aria-hidden="true" size={16} />View the source</a>
             </div>
             <figure className="mt-36 sm:mt-40 lg:mt-32"><Screen name="home" alt="The OpenWarp home screen with sample data: headcount, approvals waiting, who is away and the directory" className="shadow-window" /><figcaption className="mt-3 text-[13px] text-muted">The OpenWarp workspace with sample data.</figcaption></figure>
           </div>
@@ -175,8 +175,8 @@ export default function HomePage() {
             <h2 id="closing-title" className="max-w-[16ch] text-[clamp(2.1rem,4.8vw,3.4rem)] leading-[1.04] font-medium tracking-[-0.028em] text-balance">Keep your people records on your own terms.</h2>
             <p className="mt-5 max-w-[46ch] text-lg leading-[1.55] text-pretty text-muted">Run OpenWarp on a machine you control. There’s no account to open with us and no fee per person.</p>
             <div className="mt-8 flex flex-wrap items-center gap-2.5">
-              <a href="#self-host" className={cn(primaryButton, largeButton)}>Start self-hosting <ArrowRightIcon aria-hidden="true" size={16} /></a>
-              <a href={repositoryUrl} className={cn(secondaryButton, largeButton)}><GithubLogoIcon aria-hidden="true" size={17} />Star on GitHub</a>
+              <a href="#self-host" className={cn(primaryButton, largeButton)}>Start self-hosting <ArrowRightIcon aria-hidden="true" size={15} /></a>
+              <a href={repositoryUrl} className={cn(secondaryButton, largeButton)}><GithubLogoIcon aria-hidden="true" size={16} />Star on GitHub</a>
             </div>
           </div>
         </section>

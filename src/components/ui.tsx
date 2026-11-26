@@ -4,7 +4,8 @@ export const buttonStyle = "inline-flex min-h-11 items-center justify-center gap
 export const primaryButton = cn(buttonStyle, "border-transparent bg-primary text-primary-ink hover:bg-primary-hover");
 export const secondaryButton = cn(buttonStyle, "border-line-strong bg-panel text-foreground hover:border-control hover:bg-raised");
 export const textButton = cn(buttonStyle, "border-transparent px-2.5 text-muted hover:bg-raised hover:text-foreground");
-export const largeButton = "min-h-12! px-5 text-[15px] rounded-lg";
+// A step up from the standard button for page-level calls to action: 40px with a mouse, 44px for touch.
+export const largeButton = "px-4 pointer-fine:min-h-10";
 export const textLink = "rounded-sm text-accent underline decoration-accent/35 underline-offset-3 hover:decoration-current";
 export const inputStyle = "min-h-11 w-full min-w-0 rounded-[7px] border border-control bg-surface px-3 py-1.5 text-base text-foreground placeholder:text-hint hover:border-muted focus-visible:border-accent focus-visible:outline-1 focus-visible:outline-offset-0 aria-invalid:border-danger sm:text-sm pointer-fine:min-h-9";
 export const panelStyle = "rounded-[10px] border border-line bg-panel";
