@@ -173,6 +173,15 @@ test("two-factor sign-in, security policy, API, webhooks and routines hold their
   expect((await (await mcp({ method: "initialize", params: { protocolVersion: "2025-06-18" } })).json()).result.protocolVersion).toBe("2025-06-18");
   const tools = (await (await mcp({ method: "tools/list" })).json()).result.tools.map((tool: { name: string }) => tool.name);
   expect(tools).toContain("people_list");
+  const callWithKey = (firstName: string) => mcp({ method: "tools/call", params: {
+    name: "people_create", _meta: { "openwarp/idempotency-key": `mcp-person-${run}` },
+    arguments: { ...create.data, first_name: firstName, email: `mcp.${run}@openwarp.example` },
+  } });
+  const createdTool = (await (await callWithKey("Mica")).json()).result;
+  expect(createdTool.isError).toBe(false);
+  expect((await (await callWithKey("Mica")).json()).result.structuredContent.id).toBe(createdTool.structuredContent.id);
+  const mismatch = (await (await callWithKey("Different")).json()).result;
+  expect(mismatch).toMatchObject({ isError: true, structuredContent: { error: { code: "unprocessable" } } });
   expect(tools).not.toContain("pay_runs_list");
   expect((await request.post("/api/mcp", { headers: { ...headers, Origin: "https://evil.example" }, data: { jsonrpc: "2.0", id: 1, method: "ping" } })).status()).toBe(403);
   expect((await (await request.get("/api/v1/openapi.json")).json()).openapi).toBe("3.1.0");

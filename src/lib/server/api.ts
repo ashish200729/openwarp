@@ -6,6 +6,7 @@ import { expenseCategories, workDate } from "@/lib/operations";
 import { employmentTypes, statuses } from "@/lib/people";
 import { authenticate, claimIdempotencyKey, releaseIdempotencyKey, storeIdempotentResponse, type Authentication, type Caller } from "./api-tokens";
 import { pool } from "./db";
+import { currentDocumentSql } from "./documents";
 import { decideExpense } from "./expenses";
 import type { Member } from "./member";
 import { createEmployee, saveTeam, updateEmployee } from "./people-mutations";
@@ -84,7 +85,7 @@ function decodeCursor(cursor: string | undefined, pattern: RegExp) {
 }
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
-// Pages follow the id, which never changes, so nothing is skipped or repeated while records change.
+// Cursors follow immutable IDs. A new record whose ID precedes the cursor appears on the next fresh listing.
 async function pageOf<Row extends { id: string }>(input: { limit: number; cursor?: string }, pattern: RegExp, query: (after: string | null, limit: number) => Promise<Row[]>) {
   const rows = await query(decodeCursor(input.cursor, pattern), input.limit + 1);
   const data = rows.slice(0, input.limit);
@@ -244,13 +245,13 @@ export const operations: Operation[] = [
     input: z.strictObject({ ...page, employee_id: id.optional() }), output: list(document),
     run: (caller, input) => pageOf(input, uuidPattern, async (after, limit) => (await pool().query<z.infer<typeof document>>(
       `SELECT d.id, d.name, d.category, d.media_type, d.size_bytes, d.employee_id, d.needs_acknowledgement, ${utc("d.created_at")} AS created_at FROM documents d
-       WHERE d.archived_at IS NULL AND d.category <> 'receipt' AND ($1 OR d.employee_id IS NULL) AND ($2::uuid IS NULL OR d.id > $2) AND ($3::uuid IS NULL OR d.employee_id = $3) ORDER BY d.id LIMIT $4`, [personalFields(caller), after, input.employee_id ?? null, limit],
+       WHERE ${currentDocumentSql} AND d.category <> 'receipt' AND ($1 OR d.employee_id IS NULL) AND ($2::uuid IS NULL OR d.id > $2) AND ($3::uuid IS NULL OR d.employee_id = $3) ORDER BY d.id LIMIT $4`, [personalFields(caller), after, input.employee_id ?? null, limit],
     )).rows),
   }),
   operation({
     name: "activity_list", method: "GET", path: "/activity", scope: "activity:read", summary: "List activity, newest first. Events about pay, benefits, personal details, documents, time and expenses also need the scope for that data.", input: z.strictObject({ ...page, event: z.string().max(81).optional(), employee_id: id.optional() }), output: list(activity),
     run: (caller, input) => pageOf(input, /^[1-9]\d{0,17}$/, async (after, limit) => (await pool().query<z.infer<typeof activity>>(
-      `SELECT a.id::text, a.event, a.employee_id, a.detail, u.name AS actor, ${utc("a.created_at")} AS created_at FROM activity_log a LEFT JOIN "user" u ON u.id = a.actor_id
+      `SELECT a.id::text, a.event, a.employee_id, a.detail, coalesce(a.actor_name, u.name) AS actor, ${utc("a.created_at")} AS created_at FROM activity_log a LEFT JOIN "user" u ON u.id = a.actor_id
        WHERE ($1::bigint IS NULL OR a.id < $1) AND ($2::text IS NULL OR a.event = $2) AND ($3::uuid IS NULL OR a.employee_id = $3) AND a.event = ANY($5::text[]) ORDER BY a.id DESC LIMIT $4`, [after, input.event ?? null, input.employee_id ?? null, limit, visibleEvents(caller)],
     )).rows),
   }),
@@ -308,8 +309,33 @@ function match(path: string, segments: string[]) {
   return values;
 }
 
+async function executeRequest(caller: Caller, entry: Operation, input: Record<string, unknown>, key: string | null, fingerprint: string) {
+  let claimed = false;
+  try {
+    if (key !== null) {
+      if (!/^[\x21-\x7e]{1,200}$/.test(key)) throw new ApiError("invalid_request", "Idempotency-Key must be 1 to 200 visible characters.");
+      if (!caller.scopes.has(entry.scope)) throw new ApiError("insufficient_scope", `This token needs the ${entry.scope} scope.`);
+      const claim = await claimIdempotencyKey(caller, key, fingerprint);
+      if (claim.state === "mismatch") throw new ApiError("unprocessable", "This Idempotency-Key was used for a different request.");
+      if (claim.state === "running") throw new ApiError("conflict", "A request with this Idempotency-Key is still running, or ended without a known result. Check the record before you send it with a new key.");
+      if (claim.state === "done") return new Response(claim.response, { status: claim.status, headers: { ...baseHeaders, "Idempotency-Replayed": "true" } });
+      claimed = true;
+    }
+    const body = JSON.stringify(await execute(caller, entry, input));
+    const status = entry.status ?? 200;
+    if (claimed && key) await storeIdempotentResponse(caller, key, status, body);
+    return new Response(body, { status, headers: baseHeaders });
+  } catch (error) {
+    const failure = error instanceof ApiError ? error : new ApiError("unavailable", "The API is unavailable right now.");
+    if (!(error instanceof ApiError)) console.error("OpenWarp operation failed", error instanceof Error ? error.name : "unknown");
+    const response = errorResponse(failure);
+    if (claimed && key && failure.status < 500) await storeIdempotentResponse(caller, key, failure.status, await response.clone().text()).catch(() => undefined);
+    else if (claimed && key && caller.progress === "none") await releaseIdempotencyKey(caller, key).catch(() => undefined);
+    return response;
+  }
+}
+
 export async function handleApi(request: Request, segments: string[]) {
-  let pending: { caller: Caller; key: string } | null = null;
   try {
     const authentication = await authenticate(request);
     if ("refused" in authentication) return refusalResponse(authentication);
@@ -336,27 +362,11 @@ export async function handleApi(request: Request, segments: string[]) {
     if (Object.keys(values).some((name) => name in input)) throw new ApiError("invalid_request", "Send the id in the path only.");
 
     const key = entry.method === "POST" ? request.headers.get("idempotency-key") : null;
-    if (key !== null) {
-      if (!/^[\x21-\x7e]{1,200}$/.test(key)) throw new ApiError("invalid_request", "Idempotency-Key must be 1 to 200 visible characters.");
-      if (!caller.scopes.has(entry.scope)) throw new ApiError("insufficient_scope", `This token needs the ${entry.scope} scope.`);
-      const claim = await claimIdempotencyKey(caller, key, JSON.stringify([entry.name, values, input]));
-      if (claim.state === "mismatch") throw new ApiError("unprocessable", "This Idempotency-Key was used for a different request.");
-      if (claim.state === "running") throw new ApiError("conflict", "A request with this Idempotency-Key is still running, or ended without a known result. Check the record before you send it with a new key.");
-      if (claim.state === "done") return new Response(claim.response, { status: claim.status, headers: { ...baseHeaders, "Idempotency-Replayed": "true" } });
-      pending = { caller, key };
-    }
-    const body = JSON.stringify(await execute(caller, entry, { ...input, ...values }));
-    const status = entry.status ?? 200;
-    if (pending) await storeIdempotentResponse(caller, pending.key, status, body);
-    return new Response(body, { status, headers: baseHeaders });
+    return await executeRequest(caller, entry, { ...input, ...values }, key, JSON.stringify([entry.name, values, input]));
   } catch (error) {
     const apiError = error instanceof ApiError ? error : new ApiError("unavailable", "The API is unavailable right now.");
     if (!(error instanceof ApiError)) console.error("OpenWarp API request failed", error instanceof Error ? error.name : "unknown");
-    const response = errorResponse(apiError);
-    // A refusal is remembered. A failure is forgotten when nothing was saved, and otherwise keeps the key, so a retry can’t repeat a change.
-    if (pending && apiError.status < 500) await storeIdempotentResponse(pending.caller, pending.key, apiError.status, await response.clone().text()).catch(() => undefined);
-    else if (pending?.caller.progress === "none") await releaseIdempotencyKey(pending.caller, pending.key).catch(() => undefined);
-    return response;
+    return errorResponse(apiError);
   }
 }
 
@@ -391,7 +401,7 @@ export function openApiDocument() {
 export const protocolVersions = ["2025-06-18", "2025-03-26"];
 type RpcId = string | number | null;
 const rpcFields = z.object({ jsonrpc: z.literal("2.0"), id: z.union([z.string().max(200), z.number()]).optional(), method: z.string().max(100), params: z.record(z.string(), z.unknown()).optional() });
-const callFields = z.object({ name: z.string().max(100), arguments: z.record(z.string(), z.unknown()).default({}) });
+const callFields = z.object({ name: z.string().max(100), arguments: z.record(z.string(), z.unknown()).default({}), _meta: z.record(z.string(), z.unknown()).optional() });
 
 const rpc = (rpcId: RpcId, body: { result: unknown } | { error: { code: number; message: string } }, status = 200) => Response.json({ jsonrpc: "2.0", id: rpcId, ...body }, { status, headers: baseHeaders });
 
@@ -399,6 +409,7 @@ export async function handleMcp(request: Request) {
   // Browsers send Origin. Refusing other origins keeps a web page from reaching the server through DNS rebinding.
   const origin = request.headers.get("origin");
   if (origin !== null && origin !== workspaceOrigin()) return new Response(null, { status: 403, headers: baseHeaders });
+  let responseId: RpcId = null;
   try {
     const authentication = await authenticate(request);
     if ("refused" in authentication) return refusalResponse(authentication);
@@ -414,6 +425,7 @@ export async function handleMcp(request: Request) {
     const message = rpcFields.safeParse(body);
     if (!message.success) return rpc(null, { error: { code: -32600, message: "Send one JSON-RPC 2.0 message." } }, 400);
     const { id: rpcId, method, params } = message.data;
+    responseId = rpcId ?? null;
     if (rpcId === undefined) return new Response(null, { status: 202, headers: { "Cache-Control": "private, no-store" } });
 
     if (method === "initialize") {
@@ -427,16 +439,19 @@ export async function handleMcp(request: Request) {
       const call = callFields.safeParse(params);
       const entry = call.success ? available.find((candidate) => candidate.name === call.data.name) : undefined;
       if (!call.success || !entry) return rpc(rpcId, { error: { code: -32602, message: "Unknown tool, or this token doesn’t have its scope." } });
-      try {
-        const result = await execute(caller, entry, call.data.arguments);
-        return rpc(rpcId, { result: { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: false } });
-      } catch (error) {
-        return rpc(rpcId, { result: { content: [{ type: "text", text: error instanceof ApiError ? error.message : "The tool failed." }], isError: true } });
+      const header = request.headers.get("idempotency-key");
+      const meta = call.data._meta?.["openwarp/idempotency-key"];
+      if (meta !== undefined && (typeof meta !== "string" || (header !== null && meta !== header))) {
+        return rpc(rpcId, { error: { code: -32602, message: "Supply one consistent string idempotency key." } });
       }
+      const key = entry.method === "GET" ? null : header ?? (typeof meta === "string" ? meta : null);
+      const response = await executeRequest(caller, entry, call.data.arguments, key, JSON.stringify(["mcp", entry.name, call.data.arguments]));
+      const data = await response.json();
+      return rpc(rpcId, { result: { content: [{ type: "text", text: response.ok ? JSON.stringify(data) : data.error.message }], structuredContent: data, isError: !response.ok } });
     }
     return rpc(rpcId, { error: { code: -32601, message: "Method not found." } });
   } catch (error) {
     console.error("OpenWarp MCP request failed", error instanceof Error ? error.name : "unknown");
-    return errorResponse(new ApiError("unavailable", "The API is unavailable right now."));
+    return rpc(responseId, { error: { code: -32603, message: "The API is unavailable right now." } }, 500);
   }
 }

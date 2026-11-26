@@ -174,7 +174,7 @@ export function commandWebhook(member: Member, input: { id: string; operation: "
 export function resendDelivery(member: Member, id: string) {
   return runAsAdmin(member, async (client) => {
     const { rowCount } = await client.query(
-      `UPDATE webhook_deliveries d SET state = 'pending', attempts = 0, next_attempt_at = now(), error = '' FROM webhook_endpoints e WHERE d.id = $1 AND e.id = d.endpoint_id AND e.state = 'active' AND d.state <> 'pending'`, [id],
+      `UPDATE webhook_deliveries d SET state = 'pending', attempts = 0, next_attempt_at = now(), error = '', response_status = NULL, delivered_at = NULL FROM webhook_endpoints e WHERE d.id = $1 AND e.id = d.endpoint_id AND e.state = 'active' AND d.state <> 'pending'`, [id],
     );
     if (!rowCount) throw new PeopleError("This delivery is already waiting, or its webhook is off.");
   });
@@ -202,7 +202,7 @@ async function queueEvents() {
     const count = await transaction(async (client) => {
       const activity = await readActivity(client, "webhooks");
       if (!activity.length) return 0;
-      const { rows: endpoints } = await client.query<{ id: string; events: string[]; createdAt: Date }>(`SELECT id, events, created_at AS "createdAt" FROM webhook_endpoints WHERE state = 'active'`);
+      const { rows: endpoints } = await client.query<{ id: string; events: string[]; createdAt: Date }>(`SELECT id, events, created_at AS "createdAt" FROM webhook_endpoints`);
       for (const endpoint of endpoints) for (const row of activity) {
         // Anything sensitive is sent only where an administrator chose that event by name.
         if (row.at >= endpoint.createdAt && (endpoint.events.length ? endpoint.events.includes(row.event) : !eventScope(row.event))) {

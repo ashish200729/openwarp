@@ -57,7 +57,7 @@ Every setting here is optional. See [.env.example](.env.example).
 - **Data key:** set `OPENWARP_DATA_KEY` before entering bank, identity or two-factor data, and never change it. It encrypts those values. Without it the session secret is used, and changing that secret makes them unreadable.
 - **Email:** set `OPENWARP_SMTP_URL` and `OPENWARP_EMAIL_FROM`. `smtp://` requires STARTTLS unless the host is loopback or the URL has `?starttls=off`, and `smtps://` uses TLS from the first byte. Password reset by email appears when both are set.
 - **Single sign-on:** set the `OPENWARP_OIDC_*` values and register `<origin>/api/sso/callback` as the redirect URI. It signs in existing accounts whose verified email matches.
-- **API and MCP:** create a token in **Settings, API and MCP**. The API is at `/api/v1`, its OpenAPI document at `/api/v1/openapi.json`, and the MCP endpoint at `/api/mcp`. `node scripts/openwarp.mjs` is a small client that reads `OPENWARP_URL` and `OPENWARP_TOKEN`.
+- **API and MCP:** create a token in **Settings, API and MCP**. The API is at `/api/v1`, its OpenAPI document at `/api/v1/openapi.json`, and the MCP endpoint at `/api/mcp`. For REST creates and decisions, or an MCP write, send the same `Idempotency-Key` with each retry. MCP clients can also pass the key in `params._meta["openwarp/idempotency-key"]`. `node scripts/openwarp.mjs` is a small client that reads `OPENWARP_URL` and `OPENWARP_TOKEN`.
 
 ## Develop and verify
 
