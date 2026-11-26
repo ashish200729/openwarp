@@ -9,20 +9,26 @@ import { pool, transaction } from "./db";
 import type { Member } from "./member";
 import { notify } from "./notify";
 import { lockActivity, systemAudit } from "./platform-settings";
-import { queueDelivery, readActivity } from "./webhooks";
+import { queueDelivery } from "./webhooks";
 import { audit, PeopleError, runAsAdmin } from "./write";
 
 export type Routine = { id: string; name: string; state: "draft" | "active"; trigger: RoutineTrigger; conditions: RoutineConditions; action: RoutineAction; version: number; activeFrom: Date | null; lastRun: Date | null; lastOutcome: string | null };
 export type RoutineRun = { id: string; outcome: "done" | "skipped" | "failed"; detail: string; employeeId: string | null; employeeName: string; at: Date };
 
 type Subject = { id: string; firstName: string; fullName: string; title: string };
-type Live = Pick<Routine, "id" | "name" | "trigger" | "conditions" | "action"> & { activeFrom: Date; lastOccurrence: string };
+type Live = Pick<Routine, "id" | "name" | "trigger" | "conditions" | "action" | "version"> & { activeFrom: Date; lastOccurrence: string };
 
 const columns = `r.id, r.name, r.state, r.trigger, r.conditions, r.action, r.version, r.active_from AS "activeFrom"`;
 const matching = `e.status <> 'archived' AND ($1::uuid IS NULL OR e.team_id = $1) AND ($2::text IS NULL OR e.employment_type = $2) AND ($3::text IS NULL OR e.status = $3)`;
 const subjectColumns = `e.id, e.first_name AS "firstName", concat_ws(' ', e.first_name, e.last_name) AS "fullName", e.title`;
 const conditionValues = (conditions: RoutineConditions) => [conditions.teamId, conditions.employmentType, conditions.status];
 const personal = /\{\{\s*(first_name|full_name|title)\s*\}\}/;
+const routineMaxAttempts = 6;
+const scheduleBatchSize = 500;
+
+type RunResult = { outcome: "done" | "skipped" | "failed" | null; retryable: boolean };
+type RunRow = { id: string; outcome: "done" | "skipped" | "failed"; attempts: number; nextAttemptAt: Date; routineVersion: number | null };
+type ActivityRow = { id: string; event: string; employeeId: string | null; detail: string; at: Date };
 
 // A routine can't start another one, and a schedule that tells administrators or a webhook has no one person to name.
 export const routineEvents = Object.keys(activityLabels).filter((event) => !event.startsWith("routine."));
@@ -107,12 +113,13 @@ export function commandRoutine(member: Member, input: { id: string; operation: "
 
 export async function runRoutineNow(member: Member, input: { id: string; employeeId: string | null }) {
   const found = await runAsAdmin(member, async (client) => {
-    const { rows } = await client.query<Live>(`SELECT id, name, trigger, conditions, action, coalesce(active_from, now()) AS "activeFrom", last_occurrence AS "lastOccurrence" FROM routines WHERE id = $1`, [input.id]);
+    const { rows } = await client.query<Live>(`SELECT id, name, trigger, conditions, action, version, coalesce(active_from, now()) AS "activeFrom", last_occurrence AS "lastOccurrence" FROM routines WHERE id = $1`, [input.id]);
     const routine = rows[0];
     if (!routine) throw new PeopleError("This routine could not be found.");
     await checkDefinition(client, routine);
-    let subjects = await matchingPeople(client, routine.conditions);
+    let subjects: Subject[] = [];
     if (needsPerson(routine.trigger)) {
+      subjects = await matchingPeople(client, routine.conditions);
       if (!input.employeeId) throw new PeopleError("Choose a person to run this for.");
       subjects = subjects.filter((subject) => subject.id === input.employeeId);
       if (!subjects.length) throw new PeopleError("That person doesn’t match this routine’s conditions.");
@@ -121,11 +128,14 @@ export async function runRoutineNow(member: Member, input: { id: string; employe
     return { routine, subjects };
   });
   const key = `manual:${randomUUID()}`;
+  if (found.routine.trigger.kind === "schedule" && !oncePerOccurrence(found.routine.trigger, found.routine.action)) {
+    return runScheduledPeople(found.routine, key);
+  }
   return runFor(found.routine, key, found.subjects);
 }
 
-async function matchingPeople(client: Pick<PoolClient, "query">, conditions: RoutineConditions) {
-  const { rows } = await client.query<Subject>(`SELECT ${subjectColumns} FROM employees e WHERE ${matching} ORDER BY e.id LIMIT 5000`, conditionValues(conditions));
+async function matchingPeople(client: Pick<PoolClient, "query">, conditions: RoutineConditions, afterId: string | null = null, limit = 5000) {
+  const { rows } = await client.query<Subject>(`SELECT ${subjectColumns} FROM employees e WHERE ${matching} AND ($4::uuid IS NULL OR e.id > $4) ORDER BY e.id LIMIT $5`, [...conditionValues(conditions), afterId, limit]);
   return rows;
 }
 
@@ -134,18 +144,27 @@ async function runFor(routine: Live, key: string, subjects: Subject[]) {
   const total = { done: 0, skipped: 0, failed: 0 };
   if (oncePerOccurrence(routine.trigger, routine.action)) {
     const outcome = await runOnce(routine, key, null);
-    if (outcome) total[outcome] += 1;
+    if (outcome.outcome) total[outcome.outcome] += 1;
     return total;
   }
   for (const subject of subjects) {
     const outcome = await runOnce(routine, `${key}:${subject.id}`, subject);
-    if (outcome) total[outcome] += 1;
+    if (outcome.outcome) total[outcome.outcome] += 1;
   }
   return total;
 }
 
-// The run is recorded in the same transaction as its action, so an occurrence that already ran is never repeated.
-async function runOnce(routine: Live, occurrence: string, subject: Subject | null): Promise<"done" | "skipped" | "failed" | null> {
+const databaseCode = (error: unknown) => typeof error === "object" && error && "code" in error ? String(error.code) : error instanceof Error ? error.name : "unknown";
+
+function retryDelay(attempt: number) {
+  return Math.min(60 * 3 ** Math.max(0, attempt - 1), 43_200);
+}
+
+function retryableOccurrence(occurrence: string) {
+  return !occurrence.startsWith("manual:");
+}
+
+async function runOnce(routine: Live, occurrence: string, subject: Subject | null): Promise<RunResult> {
   try {
     return await transaction(async (client) => {
       await lockActivity(client);
@@ -153,21 +172,61 @@ async function runOnce(routine: Live, occurrence: string, subject: Subject | nul
     });
   } catch (error) {
     console.error("OpenWarp could not run a routine", databaseCode(error));
-    const { rowCount } = await pool().query("INSERT INTO routine_runs (routine_id, occurrence, employee_id, outcome, detail) SELECT id, $2, $3, 'failed', 'Something went wrong.' FROM routines WHERE id = $1 ON CONFLICT DO NOTHING", [routine.id, occurrence, subject?.id ?? null]);
-    return rowCount ? "failed" : null;
+    throw error;
   }
 }
 
-const databaseCode = (error: unknown) => typeof error === "object" && error && "code" in error ? String(error.code) : error instanceof Error ? error.name : "unknown";
-
-async function record(client: PoolClient, routine: Live, occurrence: string, subject: Subject | null) {
-  const { rows } = await client.query<{ id: string }>(
-    `INSERT INTO routine_runs (routine_id, occurrence, employee_id, outcome, detail) SELECT r.id, $2, $3, 'done', '' FROM routines r WHERE r.id = $1 ON CONFLICT (routine_id, occurrence) DO NOTHING RETURNING id::text`, [routine.id, occurrence, subject?.id ?? null],
+async function findRun(client: PoolClient, routineId: string, occurrence: string) {
+  const { rows } = await client.query<RunRow>(
+    `SELECT id::text, outcome, attempts, next_attempt_at AS "nextAttemptAt", routine_version AS "routineVersion" FROM routine_runs WHERE routine_id = $1 AND occurrence = $2 FOR UPDATE`, [routineId, occurrence],
   );
-  if (!rows[0]) return null;
-  const { skipped, detail } = await act(client, routine, subject);
-  await client.query("UPDATE routine_runs SET outcome = $2, detail = $3 WHERE id = $1", [rows[0].id, skipped ? "skipped" : "done", detail.slice(0, 300)]);
-  return skipped ? "skipped" as const : "done" as const;
+  return rows[0] ?? null;
+}
+
+async function claimRun(client: PoolClient, routine: Live, occurrence: string, subject: Subject | null) {
+  const { rows: current } = await client.query<{ version: number }>("SELECT version FROM routines WHERE id = $1", [routine.id]);
+  if (!current[0] || current[0].version !== routine.version) return null;
+  const { rows } = await client.query<{ id: string }>(
+    `INSERT INTO routine_runs (routine_id, occurrence, employee_id, outcome, detail, attempts, next_attempt_at, routine_version)
+     VALUES ($1, $2, $3, 'failed', '', 0, now(), $4) ON CONFLICT (routine_id, occurrence) DO NOTHING RETURNING id::text`, [routine.id, occurrence, subject?.id ?? null, routine.version],
+  );
+  if (rows[0]) return { id: rows[0].id, attempts: 0, retryable: true };
+  const existing = await findRun(client, routine.id, occurrence);
+  if (!existing) return null;
+  if (existing.routineVersion !== routine.version) return { id: existing.id, attempts: existing.attempts, retryable: false, claimed: false };
+  if (existing.outcome !== "failed") return { id: existing.id, attempts: existing.attempts, retryable: false, claimed: false };
+  if (existing.attempts >= routineMaxAttempts) return { id: existing.id, attempts: existing.attempts, retryable: false, claimed: false };
+  if (existing.nextAttemptAt.getTime() > Date.now()) return { id: existing.id, attempts: existing.attempts, retryable: true, claimed: false };
+  return { id: existing.id, attempts: existing.attempts, retryable: retryableOccurrence(occurrence), claimed: true };
+}
+
+async function failRun(client: PoolClient, run: { id: string; attempts: number }, occurrence: string) {
+  const attempts = Math.min(run.attempts + 1, routineMaxAttempts);
+  const retryable = retryableOccurrence(occurrence) && attempts < routineMaxAttempts;
+  await client.query(
+    `UPDATE routine_runs SET outcome = 'failed', detail = 'Something went wrong.', attempts = $2,
+       next_attempt_at = now() + make_interval(secs => $3) WHERE id = $1`, [run.id, attempts, retryable ? retryDelay(attempts) : 0],
+  );
+  return retryable;
+}
+
+async function record(client: PoolClient, routine: Live, occurrence: string, subject: Subject | null): Promise<RunResult> {
+  const claim = await claimRun(client, routine, occurrence, subject);
+  if (!claim) return { outcome: null, retryable: false };
+  if (claim.claimed === false) return { outcome: null, retryable: claim.retryable };
+  await client.query("SAVEPOINT routine_action");
+  try {
+    const { skipped, detail } = await act(client, routine, subject);
+    await client.query("UPDATE routine_runs SET outcome = $2, detail = $3, next_attempt_at = now() WHERE id = $1", [claim.id, skipped ? "skipped" : "done", detail.slice(0, 300)]);
+    await client.query("RELEASE SAVEPOINT routine_action");
+    return { outcome: skipped ? "skipped" : "done", retryable: false };
+  } catch (error) {
+    await client.query("ROLLBACK TO SAVEPOINT routine_action");
+    const retryable = await failRun(client, claim, occurrence);
+    await client.query("RELEASE SAVEPOINT routine_action");
+    console.error("OpenWarp could not run a routine", databaseCode(error));
+    return { outcome: "failed", retryable };
+  }
 }
 
 function fill(template: string, subject: Subject | null) {
@@ -222,16 +281,30 @@ export function lastDue(trigger: Extract<RoutineTrigger, { kind: "schedule" }>, 
 }
 
 async function activeRoutines(client: Pick<PoolClient, "query"> = pool()) {
-  const { rows } = await client.query<Live>(`SELECT id, name, trigger, conditions, action, active_from AS "activeFrom", last_occurrence AS "lastOccurrence" FROM routines WHERE state = 'active' ORDER BY id`);
+  const { rows } = await client.query<Live>(`SELECT id, name, trigger, conditions, action, version, active_from AS "activeFrom", last_occurrence AS "lastOccurrence" FROM routines WHERE state = 'active' ORDER BY id`);
   return rows.filter((routine) => routineTrigger.safeParse(routine.trigger).success && routineConditions.safeParse(routine.conditions).success && routineAction.safeParse(routine.action).success);
+}
+
+async function readRoutineActivity(client: PoolClient) {
+  await lockActivity(client);
+  const { rows } = await client.query<ActivityRow>(
+    `SELECT id::text, event, employee_id AS "employeeId", detail, created_at AS at FROM activity_log
+     WHERE id > (SELECT position FROM activity_cursors WHERE consumer = 'routines') ORDER BY id LIMIT 200`,
+  );
+  return rows;
+}
+
+async function advanceRoutineActivity(client: PoolClient, id: string) {
+  await client.query("UPDATE activity_cursors SET position = $1 WHERE consumer = 'routines' AND position < $1", [id]);
 }
 
 async function runEvents(stopped: () => boolean) {
   for (let batch = 0; batch < 10 && !stopped(); batch += 1) {
-    const count = await transaction(async (client) => {
-      const activity = await readActivity(client, "routines");
-      if (!activity.length) return 0;
+    const result = await transaction(async (client) => {
+      const activity = await readRoutineActivity(client);
+      if (!activity.length) return { count: 0, blocked: false };
       const routines = (await activeRoutines(client)).filter((routine) => routine.trigger.kind === "event");
+      let blocked = false;
       for (const routine of routines) for (const row of activity) {
         if (routine.trigger.kind !== "event" || routine.trigger.event !== row.event || row.at < routine.activeFrom) continue;
         const { rows } = row.employeeId ? await client.query<Subject>(`SELECT ${subjectColumns} FROM employees e WHERE ${matching} AND e.id = $4`, [...conditionValues(routine.conditions), row.employeeId]) : { rows: [] };
@@ -240,33 +313,91 @@ async function runEvents(stopped: () => boolean) {
         if (!rows[0] && (row.employeeId || conditional)) continue;
         await client.query("SAVEPOINT run");
         try {
-          await record(client, routine, `activity:${row.id}`, rows[0] ?? null);
+          const run = await record(client, routine, `activity:${row.id}`, rows[0] ?? null);
+          blocked ||= run.retryable;
           await client.query("RELEASE SAVEPOINT run");
         } catch (error) {
           await client.query("ROLLBACK TO SAVEPOINT run");
-          console.error("OpenWarp could not run a routine", databaseCode(error));
-          await client.query("INSERT INTO routine_runs (routine_id, occurrence, employee_id, outcome, detail) VALUES ($1, $2, $3, 'failed', 'Something went wrong.') ON CONFLICT DO NOTHING", [routine.id, `activity:${row.id}`, rows[0]?.id ?? null]);
+          throw error;
         }
       }
-      return activity.length;
+      if (!blocked) await advanceRoutineActivity(client, activity.at(-1)!.id);
+      return { count: activity.length, blocked };
     });
-    if (count < 200) return;
+    if (result.count < 200 || result.blocked) return;
+  }
+}
+
+async function retryScheduledFailures(routine: Live) {
+  const { rows } = await pool().query<Subject & { occurrence: string; employeeId: string | null; status: string | null; teamId: string | null; employmentType: string | null }>(
+    `SELECT n.occurrence, n.employee_id AS "employeeId", e.status, e.team_id AS "teamId", e.employment_type AS "employmentType", ${subjectColumns}
+     FROM routine_runs n LEFT JOIN employees e ON e.id = n.employee_id
+     WHERE n.routine_id = $1 AND n.routine_version = $2 AND n.outcome = 'failed' AND n.attempts < $3 AND n.next_attempt_at <= now() AND n.occurrence LIKE 'schedule:%'
+     ORDER BY n.id LIMIT 500`, [routine.id, routine.version, routineMaxAttempts],
+  );
+  for (const row of rows) {
+    const stamp = row.occurrence.slice("schedule:".length, "schedule:".length + 16);
+    const due = new Date(`${stamp}:00Z`);
+    if (Number.isNaN(due.getTime())) {
+      await settleFailed(routine.id, row.occurrence, "The scheduled occurrence could not be parsed.");
+      continue;
+    }
+    if (due < routine.activeFrom || Date.now() - due.getTime() > 86_400_000) {
+      await settleFailed(routine.id, row.occurrence, "The scheduled occurrence expired before it could be retried.");
+      continue;
+    }
+    const matches = !row.employeeId || (row.status !== "archived" && (!routine.conditions.teamId || routine.conditions.teamId === row.teamId) && (!routine.conditions.employmentType || routine.conditions.employmentType === row.employmentType) && (!routine.conditions.status || routine.conditions.status === row.status));
+    if (!matches) {
+      await settleSkipped(routine.id, row.occurrence, "The person no longer matches this routine.");
+      continue;
+    }
+    await runOnce(routine, row.occurrence, row.employeeId ? row : null);
+  }
+}
+
+async function settleSkipped(routineId: string, occurrence: string, detail: string) {
+  await transaction(async (client) => {
+    await lockActivity(client);
+    await client.query("UPDATE routine_runs SET outcome = 'skipped', detail = $3, next_attempt_at = now() WHERE routine_id = $1 AND occurrence = $2 AND outcome = 'failed'", [routineId, occurrence, detail]);
+  });
+}
+
+async function settleFailed(routineId: string, occurrence: string, detail: string) {
+  await transaction(async (client) => {
+    await lockActivity(client);
+    await client.query("UPDATE routine_runs SET outcome = 'failed', attempts = $3, detail = $4, next_attempt_at = now() WHERE routine_id = $1 AND occurrence = $2 AND outcome = 'failed'", [routineId, occurrence, routineMaxAttempts, detail]);
+  });
+}
+
+async function runScheduledPeople(routine: Live, key: string) {
+  const total = { done: 0, skipped: 0, failed: 0 };
+  let afterId: string | null = null;
+  while (true) {
+    const subjects = await matchingPeople(pool(), routine.conditions, afterId, scheduleBatchSize);
+    if (!subjects.length) return total;
+    const batch = await runFor(routine, key, subjects);
+    total.done += batch.done;
+    total.skipped += batch.skipped;
+    total.failed += batch.failed;
+    afterId = subjects.at(-1)!.id;
   }
 }
 
 async function runSchedule(routine: Live, trigger: Extract<RoutineTrigger, { kind: "schedule" }>) {
+  await retryScheduledFailures(routine);
   const due = lastDue(trigger, new Date());
   const occurrence = due.toISOString().slice(0, 16);
   // A server that was off for more than a day skips what it missed.
   if (due < routine.activeFrom || Date.now() - due.getTime() > 86_400_000 || routine.lastOccurrence === occurrence) return;
-  await runFor(routine, `schedule:${occurrence}`, await matchingPeople(pool(), routine.conditions));
-  await pool().query("UPDATE routines SET last_occurrence = $2 WHERE id = $1 AND active_from = $3", [routine.id, occurrence, routine.activeFrom]);
+  if (oncePerOccurrence(routine.trigger, routine.action)) await runFor(routine, `schedule:${occurrence}`, []);
+  else await runScheduledPeople(routine, `schedule:${occurrence}`);
+  await pool().query("UPDATE routines SET last_occurrence = $2 WHERE id = $1 AND state = 'active' AND version = $3", [routine.id, occurrence, routine.version]);
 }
 
 // Looks back three days, so a short outage doesn't lose a date.
 async function runDates(routine: Live, trigger: Extract<RoutineTrigger, { kind: "date" }>) {
   const window = "BETWEEN greatest(current_date - 3, $5::timestamptz::date) AND current_date";
-  const fresh = (key: string) => `NOT EXISTS (SELECT 1 FROM routine_runs n WHERE n.routine_id = $6 AND n.occurrence = ${key})`;
+  const fresh = (key: string) => `(NOT EXISTS (SELECT 1 FROM routine_runs n WHERE n.routine_id = $6 AND n.occurrence = ${key}) OR EXISTS (SELECT 1 FROM routine_runs n WHERE n.routine_id = $6 AND n.routine_version = (SELECT version FROM routines WHERE id = $6) AND n.occurrence = ${key} AND n.outcome = 'failed' AND n.attempts < ${routineMaxAttempts} AND n.next_attempt_at <= now()))`;
   const values = [...conditionValues(routine.conditions), trigger.offset, routine.activeFrom, routine.id];
   if (trigger.date === "document") {
     const key = `concat('document:', d.id, ':', e.id)`;
