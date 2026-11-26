@@ -331,7 +331,7 @@ const maxAttempts = 6;
 async function cancelIneligibleEmail() {
   await pool().query(
     `UPDATE email_messages e SET cancelled_at = coalesce(cancelled_at, now()), cancel_reason = CASE
-       WHEN e.user_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM workspace_members m WHERE m.user_id = e.user_id AND m.role <> 'disabled') THEN 'recipient disabled'
+       WHEN e.user_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM workspace_members m JOIN "user" u ON u.id = m.user_id AND u.email = e.recipient WHERE m.user_id = e.user_id AND m.role <> 'disabled') THEN 'recipient disabled or changed'
        WHEN e.password_token_hash IS NOT NULL AND NOT EXISTS (SELECT 1 FROM password_tokens t WHERE t.token_hash = e.password_token_hash AND t.used_at IS NULL AND t.expires_at > now()) THEN 'link expired or superseded'
        WHEN e.notification_id IS NOT NULL AND NOT EXISTS (
          SELECT 1 FROM notifications n LEFT JOIN user_preferences p ON p.user_id = n.user_id
@@ -341,7 +341,7 @@ async function cancelIneligibleEmail() {
        ELSE cancel_reason END,
        body = NULL
      WHERE e.state = 'queued' AND e.cancelled_at IS NULL AND (
-       (e.user_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM workspace_members m WHERE m.user_id = e.user_id AND m.role <> 'disabled'))
+       (e.user_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM workspace_members m JOIN "user" u ON u.id = m.user_id AND u.email = e.recipient WHERE m.user_id = e.user_id AND m.role <> 'disabled'))
        OR (e.password_token_hash IS NOT NULL AND NOT EXISTS (SELECT 1 FROM password_tokens t WHERE t.token_hash = e.password_token_hash AND t.used_at IS NULL AND t.expires_at > now()))
        OR (e.notification_id IS NOT NULL AND NOT EXISTS (
          SELECT 1 FROM notifications n LEFT JOIN user_preferences p ON p.user_id = n.user_id
@@ -355,7 +355,7 @@ async function cancelIneligibleEmail() {
 async function deliveryCancelReason(id: string) {
   const { rows } = await pool().query<{ recipientActive: boolean; tokenValid: boolean; notificationValid: boolean }>(
     `SELECT
-       (e.user_id IS NULL OR EXISTS (SELECT 1 FROM workspace_members m WHERE m.user_id = e.user_id AND m.role <> 'disabled')) AS "recipientActive",
+       (e.user_id IS NULL OR EXISTS (SELECT 1 FROM workspace_members m JOIN "user" u ON u.id = m.user_id AND u.email = e.recipient WHERE m.user_id = e.user_id AND m.role <> 'disabled')) AS "recipientActive",
        (e.password_token_hash IS NULL OR EXISTS (SELECT 1 FROM password_tokens t WHERE t.token_hash = e.password_token_hash AND t.used_at IS NULL AND t.expires_at > now())) AS "tokenValid",
        (e.notification_id IS NULL OR EXISTS (
          SELECT 1 FROM notifications n LEFT JOIN user_preferences p ON p.user_id = n.user_id
@@ -365,7 +365,7 @@ async function deliveryCancelReason(id: string) {
      FROM email_messages e WHERE e.id = $1`, [id],
   );
   if (!rows[0]) return "message missing";
-  if (!rows[0].recipientActive) return "recipient disabled";
+  if (!rows[0].recipientActive) return "recipient disabled or changed";
   if (!rows[0].tokenValid) return "link expired or superseded";
   if (!rows[0].notificationValid) return "notification no longer eligible";
   return null;
@@ -386,7 +386,7 @@ function localLink(text: string, pathname: "/login/reset" | "/join" | "/workspac
   return null;
 }
 
-async function legacyLinkCancelReason(message: { kind: string; userId: string | null }, text: string) {
+async function legacyLinkCancelReason(message: { kind: string; userId: string | null; recipient: string }, text: string) {
   if (!message.userId) return "legacy link recipient unavailable";
   const token = localLink(text, message.kind === "reset" ? "/login/reset" : "/join")?.token;
   if (!token) return "legacy link could not be verified";
@@ -394,9 +394,10 @@ async function legacyLinkCancelReason(message: { kind: string; userId: string | 
   const { rows } = await pool().query<{ role: "admin" | "viewer" }>(
     `SELECT m.role FROM password_tokens t JOIN workspace_members m ON m.user_id = t.user_id
      JOIN "account" a ON a."userId" = t.user_id AND a."providerId" = 'credential'
+     JOIN "user" u ON u.id = t.user_id AND u.email = $4
      WHERE t.token_hash = $1 AND t.user_id = $2 AND t.purpose = $3 AND t.used_at IS NULL AND t.expires_at > now()
        AND m.role <> 'disabled' AND a."updatedAt" <= t.created_at
-       AND ($3 = 'reset' OR a."updatedAt" <= m.temporary_password_at)`, [hash, message.userId, message.kind],
+       AND ($3 = 'reset' OR a."updatedAt" <= m.temporary_password_at)`, [hash, message.userId, message.kind, message.recipient],
   );
   if (!rows[0]) return "legacy link expired or superseded";
   if (!passwordAllowed(await readPolicy(), rows[0].role)) return "legacy link no longer allowed";
@@ -416,7 +417,7 @@ export async function deliverEmail(stopped: () => boolean) {
     `UPDATE email_messages SET attempts = attempts + 1, next_attempt_at = now() + interval '5 minutes' WHERE id IN
      (SELECT e.id FROM email_messages e
       WHERE e.state = 'queued' AND e.cancelled_at IS NULL AND e.next_attempt_at <= now()
-        AND (e.user_id IS NULL OR EXISTS (SELECT 1 FROM workspace_members m WHERE m.user_id = e.user_id AND m.role <> 'disabled'))
+        AND (e.user_id IS NULL OR EXISTS (SELECT 1 FROM workspace_members m JOIN "user" u ON u.id = m.user_id AND u.email = e.recipient WHERE m.user_id = e.user_id AND m.role <> 'disabled'))
         AND (e.password_token_hash IS NULL OR EXISTS (SELECT 1 FROM password_tokens t WHERE t.token_hash = e.password_token_hash AND t.used_at IS NULL AND t.expires_at > now()))
         AND (e.notification_id IS NULL OR EXISTS (
           SELECT 1 FROM notifications n LEFT JOIN user_preferences p ON p.user_id = n.user_id
