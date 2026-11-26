@@ -8,6 +8,15 @@ export type Notice = { title: string; body?: string; href: string; kind?: "reque
 export type Notification = { id: string; title: string; body: string; href: string; unread: boolean; at: Date };
 type Audience = { employeeId: string } | { managerOf: string } | { role: "admin" } | { everyone: true };
 
+// Before delivery sources existed, announcement notices were indistinguishable from any other notification.
+// Suppress only the exact announcement route. This intentionally trades old, ambiguous in-app history for safety.
+export async function suppressLegacyAnnouncementNotifications(client: Pick<PoolClient, "query">) {
+  await client.query(
+    `UPDATE notifications SET retracted_at = coalesce(retracted_at, now()), emailed_at = coalesce(emailed_at, now())
+     WHERE source_kind IS NULL AND href = '/workspace/announcements' AND retracted_at IS NULL`,
+  );
+}
+
 // Notifications commit with the change they describe. The person who made the change is never notified of it.
 export async function notify(client: PoolClient, actor: Member | null, audience: Audience, notice: Notice) {
   const [where, value] = "employeeId" in audience ? ["m.employee_id = $5::uuid", audience.employeeId]
@@ -46,6 +55,7 @@ export async function notifyDeciders(client: PoolClient, actor: Member, employee
 }
 
 export async function listNotifications(member: Member, limit = 40) {
+  await suppressLegacyAnnouncementNotifications(pool());
   const { rows } = await pool().query<Notification>(
     `SELECT id::text, title, body, href, read_at IS NULL AS unread, created_at AS at FROM notifications
      WHERE user_id = $1 AND retracted_at IS NULL ORDER BY id DESC LIMIT $2`, [member.id, limit],
@@ -54,6 +64,7 @@ export async function listNotifications(member: Member, limit = 40) {
 }
 
 export async function unreadNotifications(member: Member) {
+  await suppressLegacyAnnouncementNotifications(pool());
   const { rows } = await pool().query<{ count: number }>("SELECT count(*)::int AS count FROM notifications WHERE user_id = $1 AND read_at IS NULL AND retracted_at IS NULL", [member.id]);
   return rows[0].count;
 }

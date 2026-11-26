@@ -8,6 +8,7 @@ import type { EmailPreference } from "@/lib/domains/platform";
 import { keyedHash, seal, unseal } from "./crypto";
 import { pool, transaction } from "./db";
 import type { Member } from "./member";
+import { suppressLegacyAnnouncementNotifications } from "./notify";
 import { emailConfigured, passwordAllowed, readPolicy, ssoLabel, workspaceName, workspaceOrigin } from "./platform-settings";
 import { audit, PeopleError, runAsAdmin } from "./write";
 
@@ -311,6 +312,7 @@ export async function sendTestEmail(member: Member) {
 // because a queued message can outlive the account or preference that created it.
 async function queueNotifications() {
   await transaction(async (client) => {
+    await suppressLegacyAnnouncementNotifications(client);
     const { rows } = await client.query<{ id: string; userId: string; title: string; body: string; href: string; send: boolean }>(
       `SELECT n.id::text, n.user_id AS "userId", n.title, n.body, n.href,
        n.read_at IS NULL AND n.created_at > now() - interval '1 day' AND n.retracted_at IS NULL AND m.role <> 'disabled' AS send
@@ -369,12 +371,48 @@ async function deliveryCancelReason(id: string) {
   return null;
 }
 
+function localLink(text: string, pathname: "/login/reset" | "/join" | "/workspace/announcements") {
+  for (const part of text.split(/\s+/)) {
+    try {
+      const url = new URL(part);
+      if (url.origin !== workspaceOrigin() || url.pathname !== pathname) continue;
+      if (pathname === "/workspace/announcements") return { token: null };
+      const tokens = url.searchParams.getAll("token");
+      if (tokens.length === 1 && /^[\w-]{43}$/.test(tokens[0]) && url.searchParams.size === 1) return { token: tokens[0] };
+    } catch {
+      // The body is untrusted mail content. Non-URLs are simply not legacy links.
+    }
+  }
+  return null;
+}
+
+async function legacyLinkCancelReason(message: { kind: string; userId: string | null }, text: string) {
+  if (!message.userId) return "legacy link recipient unavailable";
+  const token = localLink(text, message.kind === "reset" ? "/login/reset" : "/join")?.token;
+  if (!token) return "legacy link could not be verified";
+  const hash = hashPasswordToken(token);
+  const { rows } = await pool().query<{ role: "admin" | "viewer" }>(
+    `SELECT m.role FROM password_tokens t JOIN workspace_members m ON m.user_id = t.user_id
+     JOIN "account" a ON a."userId" = t.user_id AND a."providerId" = 'credential'
+     WHERE t.token_hash = $1 AND t.user_id = $2 AND t.purpose = $3 AND t.used_at IS NULL AND t.expires_at > now()
+       AND m.role <> 'disabled' AND a."updatedAt" <= t.created_at
+       AND ($3 = 'reset' OR a."updatedAt" <= m.temporary_password_at)`, [hash, message.userId, message.kind],
+  );
+  if (!rows[0]) return "legacy link expired or superseded";
+  if (!passwordAllowed(await readPolicy(), rows[0].role)) return "legacy link no longer allowed";
+  return null;
+}
+
+function isLegacyAnnouncement(text: string) {
+  return Boolean(localLink(text, "/workspace/announcements"));
+}
+
 export async function deliverEmail(stopped: () => boolean) {
   if (!emailConfigured()) return;
   await queueNotifications();
   await cancelIneligibleEmail();
   // A claimed message is retried after five minutes if this process dies before it records the result.
-  const { rows } = await pool().query<{ id: string; recipient: string; subject: string; body: Buffer; attempts: number }>(
+  const { rows } = await pool().query<{ id: string; userId: string | null; kind: string; notificationId: string | null; passwordTokenHash: string | null; recipient: string; subject: string; body: Buffer; attempts: number }>(
     `UPDATE email_messages SET attempts = attempts + 1, next_attempt_at = now() + interval '5 minutes' WHERE id IN
      (SELECT e.id FROM email_messages e
       WHERE e.state = 'queued' AND e.cancelled_at IS NULL AND e.next_attempt_at <= now()
@@ -386,7 +424,7 @@ export async function deliverEmail(stopped: () => boolean) {
             AND (coalesce(p.email, 'all') = 'all' OR p.email = 'requests' AND n.kind = 'request')
         ))
       ORDER BY e.next_attempt_at LIMIT 20 FOR UPDATE SKIP LOCKED)
-     RETURNING id, recipient, subject, body, attempts`,
+     RETURNING id, user_id AS "userId", kind, notification_id AS "notificationId", password_token_hash AS "passwordTokenHash", recipient, subject, body, attempts`,
   );
   for (const message of rows) {
     if (stopped()) return;
@@ -396,10 +434,29 @@ export async function deliverEmail(stopped: () => boolean) {
       continue;
     }
     let error = "";
+    let text = "";
     try {
-      await sendMail({ to: message.recipient, subject: message.subject, text: unseal(message.body, `email:${message.id}`) });
+      text = unseal(message.body, `email:${message.id}`);
     } catch (cause) {
       error = cause instanceof MailError ? cause.message : "The message could not be sent.";
+    }
+    if (!error && message.passwordTokenHash === null && (message.kind === "reset" || message.kind === "invitation")) {
+      const cancellation = await legacyLinkCancelReason(message, text);
+      if (cancellation) {
+        await pool().query("UPDATE email_messages SET cancelled_at = coalesce(cancelled_at, now()), cancel_reason = $2, body = NULL WHERE id = $1 AND cancelled_at IS NULL", [message.id, cancellation]);
+        continue;
+      }
+    }
+    if (!error && message.kind === "notification" && message.notificationId === null && isLegacyAnnouncement(text)) {
+      await pool().query("UPDATE email_messages SET cancelled_at = coalesce(cancelled_at, now()), cancel_reason = 'legacy announcement source unavailable', body = NULL WHERE id = $1 AND cancelled_at IS NULL", [message.id]);
+      continue;
+    }
+    if (!error) {
+      try {
+        await sendMail({ to: message.recipient, subject: message.subject, text });
+      } catch (cause) {
+        error = cause instanceof MailError ? cause.message : "The message could not be sent.";
+      }
     }
     const state = !error ? "sent" : message.attempts >= maxAttempts ? "failed" : "queued";
     await pool().query(
