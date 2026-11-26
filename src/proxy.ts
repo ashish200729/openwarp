@@ -26,4 +26,4 @@ export function proxy(request: NextRequest) {
   return response;
 }
 
-export const config = { matcher: ["/", "/login", "/workspace/:path*"] };
+export const config = { matcher: ["/", "/login/:path*", "/welcome", "/two-factor", "/workspace/:path*"] };

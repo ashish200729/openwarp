@@ -25,6 +25,9 @@ export function pool(): Pool {
 export async function transaction<T>(run: (client: PoolClient) => Promise<T>): Promise<T> {
   const client = await pool().connect();
   let discard = false;
+  // A connection lost mid-transaction emits an error as well as rejecting the query. Without a listener it ends the process.
+  const lost = () => { discard = true; };
+  client.on("error", lost);
   try {
     await client.query("BEGIN");
     const result = await run(client);
@@ -38,6 +41,7 @@ export async function transaction<T>(run: (client: PoolClient) => Promise<T>): P
     }
     throw error;
   } finally {
+    client.off("error", lost);
     client.release(discard);
   }
 }

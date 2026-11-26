@@ -13,11 +13,12 @@ const [operation] = positionals;
 const usage = `Usage:
   account create --email <email> --name <name> --role <admin|viewer>  (password on stdin)
   account set-role --email <email> --role <admin|viewer|disabled>
-  account reset-password --email <email>  (new password on stdin)`;
+  account reset-password --email <email>  (new password on stdin)
+  account disable-two-factor --email <email>`;
 const email = z.string().trim().toLowerCase().max(254).pipe(z.email()).safeParse(values.email);
 const name = z.string().trim().min(1).max(160).safeParse(values.name);
 const role = z.enum(["admin", "viewer", "disabled"]).safeParse(values.role);
-if (positionals.length !== 1 || !email.success || !["create", "set-role", "reset-password"].includes(operation)
+if (positionals.length !== 1 || !email.success || !["create", "set-role", "reset-password", "disable-two-factor"].includes(operation)
     || (operation === "create" && (!name.success || !role.success || role.data === "disabled"))
     || (operation === "set-role" && !role.success)) {
   console.error(usage);
@@ -70,7 +71,14 @@ try {
       );
       if (rowCount !== 1) throw new Error("This account does not have a single password credential.");
       await db.query('DELETE FROM "session" WHERE "userId" = $1', [user.id]);
+      await db.query("UPDATE password_tokens SET used_at = now() WHERE user_id = $1 AND used_at IS NULL", [user.id]);
       await db.query("INSERT INTO activity_log (event, subject_user_id) VALUES ('account.password_reset', $1)", [user.id]);
+    }
+    if (operation === "disable-two-factor") {
+      const { rowCount } = await db.query("DELETE FROM two_factor WHERE user_id = $1", [user.id]);
+      if (!rowCount) throw new Error("Two-factor sign-in is not on for this account.");
+      await db.query('DELETE FROM "session" WHERE "userId" = $1', [user.id]);
+      await db.query("INSERT INTO activity_log (event, subject_user_id, detail) VALUES ('two_factor.reset', $1, 'From the command line')", [user.id]);
     }
   }
   await db.query("COMMIT");

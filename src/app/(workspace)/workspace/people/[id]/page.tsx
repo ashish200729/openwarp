@@ -43,7 +43,7 @@ export default async function EmployeePage({ params, searchParams }: { params: P
     {notice && <Notice>{notice}</Notice>}
     <div className={`${panelStyle} mb-5 flex flex-wrap items-center justify-between gap-4 p-5 sm:p-6`}>
       <div className="flex min-w-0 items-center gap-3.5 sm:gap-4">
-        <Avatar name={name} large />
+        <Avatar name={name} size="large" />
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
             <h1 className="text-[clamp(1.55rem,4.8vw,2.5rem)] font-medium leading-[1.08] tracking-[-0.06em] wrap-anywhere">{name}</h1>

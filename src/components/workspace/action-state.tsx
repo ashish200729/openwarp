@@ -1,12 +1,12 @@
-import { CircleAlert } from "lucide-react";
+import { WarningCircleIcon } from "@/components/icons";
 
-export type ActionState = { error?: string; fields?: Record<string, string[]> };
+export type ActionState = { error?: string; fields?: Record<string, string[]>; message?: string; done?: number };
 
 export function FormError({ error }: { error?: string }) {
   if (!error) return null;
   return (
-    <p role="alert" className="flex items-start gap-2 rounded-lg border border-danger/30 bg-danger/8 p-3 text-sm text-danger">
-      <CircleAlert aria-hidden="true" size={16} className="mt-0.5 shrink-0" />{error}
+    <p role="alert" className="flex items-start gap-2 text-sm font-medium text-danger">
+      <WarningCircleIcon aria-hidden="true" size={17} weight="fill" className="mt-px shrink-0" />{error}
     </p>
   );
 }
