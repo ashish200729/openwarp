@@ -1,5 +1,5 @@
 import "server-only";
-import { pool } from "./db";
+import { hasRequiredSchema, pool } from "./db";
 import { deliverEmail } from "./email";
 import { runRoutines } from "./routines";
 import { deliverWebhooks } from "./webhooks";
@@ -14,7 +14,7 @@ const cleanup = [
   "DELETE FROM password_tokens WHERE expires_at < now() - interval '1 day'",
   "DELETE FROM two_factor WHERE confirmed_at IS NULL AND created_at < now() - interval '1 day'",
   "DELETE FROM api_requests WHERE created_at < now() - interval '1 day'",
-  "DELETE FROM email_messages WHERE state <> 'queued' AND created_at < now() - interval '30 days'",
+  "DELETE FROM email_messages WHERE (state <> 'queued' OR cancelled_at IS NOT NULL) AND created_at < now() - interval '30 days'",
   "DELETE FROM webhook_deliveries WHERE created_at < now() - interval '30 days'",
   // Date occurrences are kept, because they are what stops the same reminder from going out twice.
   "DELETE FROM routine_runs WHERE created_at < now() - interval '180 days' AND occurrence ~ '^(schedule|activity|manual):'",
@@ -32,9 +32,9 @@ async function tick(stopped: () => boolean, clean: boolean) {
   client.on("error", lost);
   try {
     const { rows } = await client.query<{ locked: boolean; ready: boolean }>("SELECT pg_try_advisory_lock(142050, 3) AS locked, to_regclass('public.routine_runs') IS NOT NULL AS ready");
-    if (!rows[0].locked) return;
+    if (!rows[0].locked) return false;
     try {
-      if (!rows[0].ready) return;
+      if (!rows[0].ready || !await hasRequiredSchema(client)) return false;
       const halt = () => broken || stopped();
       const jobs: [string, () => Promise<unknown>][] = [["email", () => deliverEmail(halt)], ["routines", () => runRoutines(halt)], ["webhooks", () => deliverWebhooks(halt)]];
       if (clean) jobs.push(["cleanup", async () => { for (const statement of cleanup) if (!halt()) await pool().query(statement); }]);
@@ -45,7 +45,15 @@ async function tick(stopped: () => boolean, clean: boolean) {
         if (!halt()) await workplace.sendReminders();
       }]);
       // One job failing must not keep the others from running.
-      for (const [name, run] of jobs) if (!halt()) await run().catch((error) => console.error(`OpenWarp background ${name} failed`, describe(error)));
+      let maintained = clean;
+      for (const [name, run] of jobs) {
+        if (halt()) return false;
+        try { await run(); } catch (error) {
+          if (name === "cleanup" || name === "reminders") maintained = false;
+          console.error(`OpenWarp background ${name} failed`, describe(error));
+        }
+      }
+      return maintained && !halt();
     } finally {
       if (!broken) await client.query("SELECT pg_advisory_unlock(142050, 3)");
     }
@@ -70,8 +78,7 @@ export function startWorker() {
     running = true;
     const clean = Date.now() - cleaned > 3_600_000;
     try {
-      await tick(() => stopping, clean);
-      if (clean) cleaned = Date.now();
+      if (await tick(() => stopping, clean)) cleaned = Date.now();
       failures = 0;
       wait = 0;
     } catch (error) {

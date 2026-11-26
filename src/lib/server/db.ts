@@ -22,6 +22,13 @@ export function pool(): Pool {
   return database.openwarpPool;
 }
 
+export async function hasRequiredSchema(client: Pick<PoolClient, "query"> = pool()) {
+  const { rows: [migration] } = await client.query<{ name: string; checksum: string }>(
+    "SELECT name, checksum FROM schema_migrations ORDER BY name DESC LIMIT 1",
+  );
+  return Boolean(migration && migration.name === process.env.OPENWARP_SCHEMA_REVISION && migration.checksum === process.env.OPENWARP_SCHEMA_CHECKSUM);
+}
+
 export async function transaction<T>(run: (client: PoolClient) => Promise<T>): Promise<T> {
   const client = await pool().connect();
   let discard = false;
