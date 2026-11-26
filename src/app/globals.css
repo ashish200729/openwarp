@@ -1,62 +1,87 @@
 @import "tailwindcss";
 
+@custom-variant dark {
+  &:where([data-theme="dark"] *) { @slot; }
+  @media (prefers-color-scheme: dark) {
+    &:where(html:not([data-theme]) *) { @slot; }
+  }
+}
+
+/* Without a saved preference the page follows the system theme. */
+:root { color-scheme: light dark; }
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
+
 :root {
-  color-scheme: dark;
-  --background: #0d0d10;
-  --foreground: #f3f2f0;
-  --panel: #141419;
-  --raised: #1a1a21;
-  --line: #2b2b35;
-  --control: #61616f;
-  --muted: #a5a4b0;
-  --hint: #83828f;
-  --accent: #b6adff;
-  --accent-ink: #171027;
-  --orchid: #9780f1;
-  --rose: #e381a7;
-  --peach: #f0a36d;
-  --positive: #8ed7b7;
-  --danger: #f49b9b;
+  --background: light-dark(#f7f7f5, #0f0f0e);
+  --surface: light-dark(#ffffff, #151514);
+  --panel: light-dark(#ffffff, #1a1a18);
+  --raised: light-dark(#f1f1ee, #232321);
+  --line: light-dark(#e6e6e2, #2b2b29);
+  --line-strong: light-dark(#d2d2cd, #3d3d3a);
+  --control: light-dark(#8a8a84, #6e6e69);
+  --foreground: light-dark(#171715, #f1f1ee);
+  --muted: light-dark(#5b5b56, #a9a9a3);
+  --hint: light-dark(#6c6c67, #8f8f89);
+  --primary: light-dark(#171715, #f1f1ee);
+  --primary-hover: light-dark(#3a3a36, #ffffff);
+  --primary-ink: light-dark(#ffffff, #171715);
+  --accent: light-dark(#0560b8, #6fb5f7);
+  --signal: light-dark(#0b78dd, #3f9bf0);
+  --crest: light-dark(#171715, #f1f1ee);
+  --positive: light-dark(#1a7340, #6cc891);
+  --amber: light-dark(#955100, #e8ad57);
+  --danger: light-dark(#b92b23, #f58e86);
+  --shadow-tint: light-dark(rgb(23 23 21 / 0.08), rgb(0 0 0 / 0.45));
+  --shadow-deep: light-dark(rgb(23 23 21 / 0.16), rgb(0 0 0 / 0.6));
 }
 
 @theme inline {
-  --font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
-  --font-mono: 'Geist Mono Variable', ui-monospace, monospace;
+  --font-sans: 'Hanken Grotesk Variable', 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
   --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
   --color-panel: var(--panel);
   --color-raised: var(--raised);
   --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
   --color-control: var(--control);
+  --color-foreground: var(--foreground);
   --color-muted: var(--muted);
   --color-hint: var(--hint);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-ink: var(--primary-ink);
   --color-accent: var(--accent);
-  --color-accent-ink: var(--accent-ink);
-  --color-orchid: var(--orchid);
-  --color-rose: var(--rose);
-  --color-peach: var(--peach);
+  --color-signal: var(--signal);
   --color-positive: var(--positive);
+  --color-amber: var(--amber);
   --color-danger: var(--danger);
+  --shadow-float: 0 1px 2px var(--shadow-tint), 0 10px 30px -10px var(--shadow-deep);
+  --shadow-window: 0 1px 2px var(--shadow-tint), 0 24px 60px -28px var(--shadow-deep);
 }
 
+@media print { :root, :root[data-theme] { color-scheme: light !important; } }
+
 @layer base {
-  html { scroll-padding-top: 2rem; }
+  html { scroll-padding: 5.5rem 0; }
   body { min-width: 0; }
-  ::selection { background: var(--accent); color: var(--accent-ink); }
-  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  table { border-collapse: collapse; }
+  ::selection { background: color-mix(in srgb, var(--signal) 26%, transparent); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  main:focus-visible { outline: none; }
   button:not(:disabled), summary { cursor: pointer; }
+  summary { list-style: none; }
+  summary::-webkit-details-marker { display: none; }
+  select {
+    appearance: none;
+    padding-right: 2.25rem !important;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' stroke='%237b8594' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m4 6 4 4 4-4'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.7rem center;
+  }
 }
 
 @layer components {
-  .pixel-fill {
-    background-color: var(--pixel-base, transparent);
-    background-image: conic-gradient(var(--pixel) 25%, transparent 0 50%, var(--pixel) 0 75%, transparent 0);
-    background-position: left bottom;
-    background-size: var(--pixel-size, 8px) var(--pixel-size, 8px);
-  }
-
-  .pixel-grid {
-    background-image: radial-gradient(circle, var(--pixel) 1px, transparent 1.5px);
-    background-size: var(--pixel-size, 8px) var(--pixel-size, 8px);
-  }
+  .hero-field { mask-image: linear-gradient(#000 72%, transparent); }
 }

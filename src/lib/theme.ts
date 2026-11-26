@@ -1,0 +1,6 @@
+export const themeCookie = "openwarp-theme";
+export type Theme = "light" | "dark";
+
+export function parseTheme(value: string | undefined): Theme | undefined {
+  return value === "light" || value === "dark" ? value : undefined;
+}

@@ -11,9 +11,11 @@ if (useReadout && !existsSync(readoutPath)) {
 const config: NextConfig = {
   output: "standalone",
   poweredByHeader: false,
+  // Uploads are limited to 5 MB by the workspace. The extra megabyte covers the form encoding.
+  experimental: { serverActions: { bodySizeLimit: "6mb" } },
   turbopack: {
     resolveAlias: {
-      "#openwarp-readout": useReadout ? readoutPath : "./src/components/marketing/readout-disabled.tsx",
+      "#openwarp-readout": useReadout ? readoutPath : "./src/components/marketing/digit-field.tsx",
     },
   },
   async headers() {

@@ -1,89 +1,105 @@
 import Link from "next/link";
-import { ArrowDown, ArrowRight, ArrowUpRight, GitFork, History, ListChecks, Network, Terminal } from "lucide-react";
+import type { ReactNode } from "react";
 import { Brand, repositoryUrl } from "@/components/brand";
-import { ButtonPixels, primaryButton, secondaryButton } from "@/components/ui";
-import { DirectoryPreview } from "@/components/marketing/directory-preview";
-import { WorkforceChart } from "@/components/marketing/workforce-chart";
+import { ArrowUpRightIcon, PlusIcon } from "@/components/icons";
+import { HeroField } from "@/components/marketing/hero-field";
+import { ModuleTabs } from "@/components/marketing/module-tabs";
+import { Screen } from "@/components/marketing/screen";
+import { SetupSteps } from "@/components/marketing/setup-steps";
+import { SiteHeader, siteLinks } from "@/components/marketing/site-header";
+import { largeButton, primaryButton, secondaryButton, textLink } from "@/components/ui";
+import { cn } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
-const capabilities = [
-  { title: "Employee directory", description: "Find anyone by name, role, or team. See who reports to whom and keep work details current.", icon: Network, color: "text-orchid" },
-  { title: "Onboarding and offboarding", description: "Track what’s complete and what still needs doing when someone joins or leaves.", icon: ListChecks, color: "text-rose" },
-  { title: "Activity history", description: "See who changed a record and when, with a history your admins can review.", icon: History, color: "text-peach" },
+const modules = [
+  { id: "people", title: "Directory", description: "Search by name, role, team or location. Bring people in from a CSV file, and take any view back out as one.", alt: "The OpenWarp people directory with sample employees, teams and statuses" },
+  { id: "time-off", title: "Time off", description: "People request days against their balance. Their manager approves, and the shared calendar shows who’s away without showing why.", alt: "Time off balances, requests waiting for approval and a month calendar" },
+  { id: "timesheets", title: "Timesheets", description: "Clock in from any device, or enter hours by hand. Weeks are split into regular time and overtime, approved, and carried into pay.", alt: "A team’s timesheets for one week with daily hours" },
+  { id: "pay", title: "Pay runs", description: "Gross to net with the deductions and taxes you configure, benefits, approved hours and expenses. Approve it, then download the bank file, the journal and the payslips.", alt: "A draft pay run with totals and a line for each person" },
+  { id: "devices", title: "Devices", description: "Who has which laptop, when its warranty ends and whether its owner has confirmed it’s encrypted. Leavers can’t be archived with equipment outstanding.", alt: "The device inventory with assignments and warranty dates" },
+  { id: "reports", title: "Reports", description: "Headcount, turnover, tenure, time off owed and plan against actual, worked out from the records already on file.", alt: "Headcount, turnover and tenure reports" },
 ];
+const spec = [
+  { title: "People", items: ["Profiles, custom fields and emergency contacts", "Teams, reporting lines and org chart", "Job, pay and change history", "Self-service onboarding portal", "Offboarding and rehire checklists", "Announcements"] },
+  { title: "Time", items: ["Clock in and out with breaks", "Timesheets, overtime and approvals", "Shift schedules", "Leave accrual, carryover and holidays", "Team coverage calendar"] },
+  { title: "Pay and benefits", items: ["Pay runs, off-cycle runs and corrections", "Deductions, taxes and caps you configure", "Payslips with year to date", "NACHA, SEPA and journal files", "Expenses and contractor invoices", "Benefit plans, enrollment and dependents"] },
+  { title: "Workplace", items: ["Documents with versions and expiry", "E-signatures with a tamper-evident certificate", "Devices and app access", "Training with quizzes and certificates", "Compliance calendar and notices"] },
+  { title: "Security", items: ["Two-factor sign-in and backup codes", "Single sign-on with OpenID Connect", "Administrator, manager and member access", "Bank and identity data sealed at rest", "Activity history the app can’t rewrite"] },
+  { title: "Connections", items: ["REST API with scoped tokens", "MCP server for AI assistants", "Signed webhooks with retries", "Scheduled and event routines", "Email notifications over your SMTP"] },
+];
+const excluded = ["Filing or remitting taxes", "sending money", "insurance brokerage and carrier sync", "remote control of devices", "creating accounts in other systems"];
+const questions: { question: string; answer: ReactNode }[] = [
+  { question: "Is OpenWarp connected to Warp, the payroll company?", answer: "No. OpenWarp is an independent open-source project. Warp doesn’t make, sponsor or endorse it." },
+  { question: "Does it run payroll?", answer: "It calculates gross to net from the rates you enter and produces payslips, a bank file and a journal. You’re responsible for the rates, and you or your provider file returns, remit taxes and upload the bank file." },
+  { question: "Where does employee data live?", answer: "In the PostgreSQL database you run, including uploaded files. Bank details, identity numbers and two-factor secrets are encrypted before they’re stored, with a key you hold." },
+  { question: "Who can see pay?", answer: "The person it belongs to and administrators. Managers approve time, time off and expenses for their direct reports, and they don’t see pay, bank or benefit details." },
+  { question: "Can an AI assistant use it?", answer: "Yes. The MCP server and the API use the same scoped tokens. Reading pay needs its own scope, and every change is recorded in the activity history." },
+  { question: "How do backups and upgrades work?", answer: <>Back up with <code className="font-mono text-[0.92em]">pg_dump</code>, then rebuild on the new revision. Migrations run under a lock and stop if their history was edited. The <a className={cn(textLink, "underline")} href={`${repositoryUrl}/blob/main/docs/operations.md`}>operations guide</a> has the steps.</> },
+  { question: "What does the license ask of me?", answer: "You can use and change OpenWarp under AGPL-3.0. If you let other people use a modified version over a network, you need to offer them its source." },
+];
+const heading = "text-[clamp(1.75rem,3.4vw,2.25rem)] leading-[1.12] font-medium tracking-[-0.022em] text-balance";
 
 export default function HomePage() {
   return (
-    <>
-      <header className="border-b border-line/80">
-        <div className="mx-auto flex min-h-16 max-w-[80rem] flex-wrap items-center justify-between gap-x-2 gap-y-1 px-4 py-2 sm:gap-x-4 sm:px-8 lg:px-10">
-          <Brand />
-          <nav aria-label="Main navigation" className="flex items-center gap-3 sm:gap-6">
-            <a href="#product" className="hidden min-h-11 items-center rounded-sm text-sm text-muted hover:text-foreground sm:inline-flex">Product</a>
-            <a href="#self-host" className="hidden min-h-11 items-center rounded-sm text-sm text-muted hover:text-foreground sm:inline-flex">Self-hosting</a>
-            <a href={repositoryUrl} className="hidden min-h-11 items-center gap-2 rounded-sm text-sm text-muted hover:text-foreground sm:inline-flex"><GitFork aria-hidden="true" size={15} /> GitHub</a>
-            <Link href="/login" className={secondaryButton}>Open workspace <ArrowUpRight aria-hidden="true" size={15} className="hidden sm:block" /></Link>
-          </nav>
-        </div>
-      </header>
-      <main id="main" tabIndex={-1} className="mx-auto max-w-[80rem] px-5 sm:px-8 lg:px-10">
-        <section className="grid items-center gap-9 pb-12 pt-12 sm:gap-12 sm:py-16 lg:grid-cols-[minmax(0,1.14fr)_minmax(0,1fr)] lg:gap-10 lg:pb-[4.75rem] lg:pt-[5.25rem] xl:gap-14">
-          <div className="min-w-0">
-            <p className="flex items-center gap-2.5 font-mono text-[11px] font-medium tracking-[0.18em] text-accent uppercase"><span aria-hidden="true" className="pixel-fill size-2.5 [--pixel-size:6px] [--pixel:currentColor]" /> Open-source HR software</p>
-            <h1 className="mt-5 max-w-[13ch] text-[clamp(2.7rem,7.3vw,4.9rem)] font-medium leading-[0.99] tracking-[-0.079em] lg:text-[clamp(3.6rem,5.6vw,4.9rem)]">
-              The people system <span className="text-accent">you own.</span>
-            </h1>
-            <p className="mt-6 max-w-[42ch] text-base leading-relaxed text-muted sm:text-lg">
-              Manage employees, teams, and every step from first day to last. Run it on your own infrastructure and keep your people data in your hands.
-            </p>
-            <div className="mt-7 flex flex-wrap items-center gap-2.5 sm:mt-8">
-              <a href="#self-host" className={primaryButton}><ButtonPixels /> Self-host OpenWarp <ArrowRight aria-hidden="true" size={16} /></a>
-              <a href="#product" className={secondaryButton}>Explore the product <ArrowDown aria-hidden="true" size={15} /></a>
+    <div className="bg-surface">
+      <SiteHeader />
+      <main id="main" tabIndex={-1}>
+        <section className="relative isolate overflow-hidden">
+          <HeroField className="hero-field h-[52rem]" level={0.37} />
+          <div className="mx-auto max-w-[74rem] px-5 pt-14 pb-16 sm:px-8 sm:pt-20 lg:pt-24">
+            <h1 className="text-[clamp(2.6rem,6.2vw,4.5rem)] leading-[1.02] font-medium tracking-[-0.03em]">The people system <br className="hidden sm:block" />you own.</h1>
+            <p className="mt-5 max-w-[46ch] text-lg leading-[1.55] text-pretty text-muted">Directory, time, pay, benefits, documents and devices in one workspace, on a server you control. Open source, with no per-employee fee.</p>
+            <div className="mt-8 flex flex-wrap items-center gap-2.5">
+              <a href="#self-host" className={cn(primaryButton, largeButton)}>Self-host OpenWarp</a>
+              <a href={repositoryUrl} className={cn(secondaryButton, largeButton)}>View the source</a>
             </div>
-          </div>
-          <WorkforceChart />
-        </section>
-
-        <section id="product" aria-label="Product preview" className="scroll-mt-6">
-          <DirectoryPreview />
-          <div className="mt-5 grid divide-y divide-line rounded-xl border border-line sm:grid-cols-3 sm:divide-x sm:divide-y-0">
-            {capabilities.map(({ title, description, icon: Icon, color }) => (
-              <article key={title} className="p-5 sm:p-6 lg:p-7">
-                <span className={`relative grid size-10 place-items-center rounded-md border border-line bg-panel ${color}`}><Icon aria-hidden="true" size={19} /><span aria-hidden="true" className="absolute -right-px -top-px size-2 bg-current" /></span>
-                <h3 className="mt-4 text-base font-medium tracking-tight">{title}</h3>
-                <p className="mt-1.5 max-w-[35ch] text-sm leading-relaxed text-muted">{description}</p>
-              </article>
-            ))}
+            <figure className="mt-36 sm:mt-40 lg:mt-32"><Screen name="home" alt="The OpenWarp home screen with sample data: headcount, approvals waiting, who is away and the directory" className="shadow-window" /><figcaption className="mt-3 text-[13px] text-muted">The OpenWarp workspace with sample data.</figcaption></figure>
           </div>
         </section>
 
-        <section id="self-host" className="grid items-center gap-6 py-14 sm:py-20 md:grid-cols-2 md:gap-12">
-          <div>
-            <h2 className="text-[clamp(1.85rem,5vw,3rem)] font-medium leading-tight tracking-[-0.065em]">Run it on your terms.</h2>
-            <p className="mt-3 max-w-[42ch] leading-relaxed text-muted">Deploy with Docker Compose and PostgreSQL. The source is open and there’s no per-employee software fee.</p>
-            <a href={`${repositoryUrl}#self-host`} className="mt-5 inline-flex min-h-11 items-center gap-2 rounded-sm text-sm font-medium text-accent hover:underline">Read the setup guide <ArrowUpRight aria-hidden="true" size={16} /></a>
+        <section id="product" className="mx-auto max-w-[74rem] px-5 pt-16 sm:px-8 sm:pt-24">
+          <h2 className={cn(heading, "mb-8 max-w-[24ch] sm:mb-12")}>The work between someone’s first day and their last.</h2>
+          <ModuleTabs label="Product areas" modules={modules.map(({ alt, ...module }) => ({ ...module, screen: <Screen name={module.id} alt={alt} /> }))} />
+        </section>
+
+        <section id="scope" className="mx-auto max-w-[74rem] px-5 pt-24 sm:px-8 sm:pt-32">
+          <h2 className={heading}>What’s in v0.3</h2>
+          <div className="mt-8 grid gap-x-10 gap-y-10 sm:grid-cols-2 lg:grid-cols-3">
+            {spec.map((group) => <div key={group.title}><h3 className="border-b border-foreground pb-2 text-[15px] font-semibold">{group.title}</h3><ul>{group.items.map((item) => <li key={item} className="border-b border-line py-2.5 text-[15px] leading-snug text-pretty">{item}</li>)}</ul></div>)}
           </div>
-          <div className="overflow-hidden rounded-xl border border-line bg-panel">
-            <div className="flex items-center gap-2.5 border-b border-line px-4 py-3 font-mono text-xs text-muted"><Terminal size={16} aria-hidden="true" /> Terminal</div>
-            <div className="space-y-2 p-4 font-mono text-xs leading-relaxed break-all sm:text-sm">
-              <p><span aria-hidden="true" className="select-none text-accent">$ </span>git clone {repositoryUrl}.git</p>
-              <p><span aria-hidden="true" className="select-none text-accent">$ </span>cd openwarp</p>
-              <p className="text-muted"># Configure .env, then start the stack</p>
-              <p><span aria-hidden="true" className="select-none text-accent">$ </span>docker compose up -d --build</p>
-            </div>
+          <div className="mt-10 grid gap-x-10 gap-y-2 text-[15px] leading-relaxed lg:grid-cols-3"><h3 className="font-semibold">Not included</h3><p className="text-pretty text-muted lg:col-span-2">{excluded.slice(0, -1).join(", ")} and {excluded.at(-1)}. If you need these today, keep the provider you have and use OpenWarp as the record behind it.</p></div>
+        </section>
+
+        <section id="self-host" className="mt-24 border-y border-line bg-background sm:mt-32">
+          <div className="mx-auto grid max-w-[74rem] items-start gap-10 px-5 py-16 sm:px-8 sm:py-24 lg:grid-cols-[17rem_minmax(0,1fr)] lg:gap-12">
+            <div><h2 className={heading}>Three steps to a running workspace</h2>
+              <p className="mt-4 text-[15px] leading-relaxed text-pretty text-muted">You need Docker Engine with Compose v2. Compose starts PostgreSQL, applies the migrations and runs the app as a non-root user. Then create your first administrator and sign in.</p>
+              <a href={`${repositoryUrl}#self-host`} className={cn(textLink, "mt-4 inline-flex min-h-11 items-center gap-1 text-[15px] font-medium")}>Full setup guide <ArrowUpRightIcon aria-hidden="true" size={15} /></a></div>
+            <SetupSteps />
+          </div>
+        </section>
+
+        <section id="questions" className="mx-auto grid max-w-[74rem] gap-8 px-5 py-16 sm:px-8 sm:py-24 lg:grid-cols-[17rem_minmax(0,1fr)] lg:gap-12">
+          <h2 className={heading}>Questions</h2>
+          <div className="max-w-3xl border-t border-line">
+            {questions.map(({ question, answer }) => <details key={question} className="group border-b border-line">
+              <summary className="flex min-h-14 items-center justify-between gap-4 rounded py-3.5 text-[17px] font-medium">{question}<PlusIcon aria-hidden="true" size={16} className="shrink-0 text-hint group-open:rotate-45" /></summary>
+              <p className="max-w-[62ch] pb-5 text-base leading-relaxed text-pretty text-muted">{answer}</p>
+            </details>)}
           </div>
         </section>
       </main>
-      <footer className="border-t border-line/80">
-        <div className="mx-auto flex max-w-[80rem] flex-wrap items-center justify-between gap-3 px-5 py-5 sm:px-8 lg:px-10">
+      <footer className="border-t border-line">
+        <div className="mx-auto flex max-w-[74rem] flex-wrap items-center justify-between gap-x-10 gap-y-2 px-5 py-6 sm:px-8">
           <Brand />
-          <div className="flex flex-wrap gap-x-5 gap-y-1 text-sm text-muted">
-            <a href={`${repositoryUrl}/blob/main/LICENSE`} className="inline-flex min-h-10 items-center hover:text-foreground">AGPL-3.0</a>
-            <a href={repositoryUrl} className="inline-flex min-h-10 items-center gap-1.5 hover:text-foreground">Source code <ArrowUpRight aria-hidden="true" size={14} /></a>
-          </div>
+          <nav aria-label="Footer" className="flex flex-wrap gap-x-6 text-sm text-muted">
+            {siteLinks.map(({ label, href }) => <a key={href} href={href} className="inline-flex min-h-11 items-center rounded hover:text-foreground">{label}</a>)}
+            <a href={`${repositoryUrl}/blob/main/LICENSE`} className="inline-flex min-h-11 items-center rounded hover:text-foreground">License</a>
+            <Link href="/login" className="inline-flex min-h-11 items-center rounded hover:text-foreground">Sign in</Link>
+          </nav>
         </div>
       </footer>
-    </>
+    </div>
   );
 }

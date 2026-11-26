@@ -73,6 +73,31 @@ test("public landing is accessible and reflows on phones and desktops", async ({
   await checkA11y(page);
 });
 
+test("the color theme follows the system, switches, and persists, and the mobile menu is operable", async ({ page }) => {
+  const background = () => page.evaluate(() => getComputedStyle(document.documentElement).backgroundColor);
+  await page.emulateMedia({ reducedMotion: "reduce", colorScheme: "dark" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  expect(await background()).toBe("rgb(15, 15, 14)");
+  await checkA11y(page);
+  await page.getByRole("button", { name: "Switch color theme" }).click();
+  expect(await background()).toBe("rgb(247, 247, 245)");
+  await page.reload();
+  expect(await page.locator("html").getAttribute("data-theme")).toBe("light");
+  expect(await background()).toBe("rgb(247, 247, 245)");
+
+  const menu = page.getByRole("navigation", { name: "Mobile navigation" });
+  await page.getByLabel("Menu", { exact: true }).click();
+  await expect(menu).toBeVisible();
+  await checkA11y(page);
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
+  await page.getByLabel("Menu", { exact: true }).click();
+  await menu.getByRole("link", { name: "Scope" }).click();
+  await expect(menu).toBeHidden();
+  await expect(page.getByRole("heading", { name: "What’s in v0.3" })).toBeInViewport();
+});
+
 test("administrators manage a complete employee lifecycle and viewers see only active work records", async ({ page, browser, request, baseURL }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto("/workspace/people");
