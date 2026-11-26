@@ -296,7 +296,8 @@ test("devices, app access, training, compliance, reports and checklists follow e
     await page.getByLabel("Role team").selectOption({ label: "Harbor Team" });
     await page.getByLabel("Target start").last().fill(`${year}-05-01`);
     await page.getByRole("button", { name: "Add role" }).click();
-    await expect(page.getByRole("row", { name: /^Harbor Team/ })).toContainText("4");
+    // Two employees have started, one is a future hire, and the new planned role is still open.
+    await expect(page.getByRole("row", { name: /^Harbor Team/ }).getByRole("cell")).toHaveText(["2", "1", "3", "0", "0"]);
     await page.getByLabel("View name").fill("Plan check");
     await page.getByRole("button", { name: "Save this view" }).click();
     await expect(page.getByRole("link", { name: "Plan check" })).toBeVisible();
