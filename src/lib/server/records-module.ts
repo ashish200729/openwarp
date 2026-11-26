@@ -10,7 +10,7 @@ import type { Member } from "./member";
 import type { Todo } from "./modules";
 import { onboardingSteps } from "./onboarding";
 import { expiringAuthorizations, pendingChanges } from "./personal";
-import { createNewHireSignatures, signaturesToSign, stuckSignatures } from "./signatures";
+import { closeEmployeeSignatures, createNewHireSignatures, signaturesToSign, stuckSignatures } from "./signatures";
 import { audit } from "./write";
 
 const due = (date: string | null) => !date ? "" : date < today() ? `Was due ${formatDate(date)}` : `Due ${formatDate(date)}`;
@@ -69,4 +69,12 @@ export async function onOffboarding(client: PoolClient, member: Member, employee
 
 export async function archiveBlockers(client: PoolClient, employeeId: string): Promise<string[]> {
   return [];
+}
+
+export async function afterArchive(client: PoolClient, member: Member, employeeId: string) {
+  await closeEmployeeSignatures(client, member, employeeId);
+  const { rows } = await client.query<{ title: string }>(
+    "UPDATE document_requests SET state='cancelled', decided_by=$2, decided_at=now(), return_note='' WHERE employee_id=$1 AND state IN ('open','submitted','returned') RETURNING title", [employeeId, member.id],
+  );
+  for (const row of rows) await audit(client, member, "document_request.cancelled", { employeeId, detail: row.title });
 }

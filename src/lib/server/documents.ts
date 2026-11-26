@@ -16,6 +16,7 @@ export type DocumentRow = {
 };
 export type DocumentVersion = { id: string; version: number; sizeBytes: number; createdAt: Date; uploadedBy: string; expiresOn: string | null };
 export type DocumentRequest = {
+  employeeArchived: boolean;
   id: string; employeeId: string; employeeName: string; title: string; instructions: string; category: DocumentCategory; dueOn: string | null; state: DocumentRequestState; returnNote: string; documentId: string | null; createdAt: Date;
 };
 
@@ -60,14 +61,14 @@ async function announceDocument(client: PoolClient, member: Member, document: { 
 }
 
 const superseded = "EXISTS (SELECT 1 FROM documents n WHERE n.series_id = coalesce(d.series_id, d.id) AND n.version > d.version)";
-const current = `d.archived_at IS NULL AND NOT ${superseded}`;
+export const currentDocumentSql = `d.archived_at IS NULL AND NOT ${superseded}`;
 
 type Current = { name: string; category: DocumentCategory; employeeId: string | null; needsAcknowledgement: boolean; folder: string; seriesId: string; version: number };
 
 async function findCurrent(client: PoolClient, id: string): Promise<Current | undefined> {
   const { rows } = await client.query<Current>(
     `SELECT d.name, d.category, d.employee_id AS "employeeId", d.needs_acknowledgement AS "needsAcknowledgement", d.folder, coalesce(d.series_id, d.id) AS "seriesId", d.version
-     FROM documents d WHERE d.id = $1 AND d.category <> 'receipt' AND ${current}`, [id],
+     FROM documents d WHERE d.id = $1 AND d.category <> 'receipt' AND ${currentDocumentSql}`, [id],
   );
   return rows[0];
 }
@@ -106,8 +107,10 @@ export function saveDocumentDetails(member: Member, input: z.infer<typeof docume
 
 export function archiveDocument(member: Member, id: string) {
   return runAsAdmin(member, async (client) => {
+    const { rowCount: inReview } = await client.query("SELECT 1 FROM document_requests WHERE document_id = $1 AND state IN ('submitted', 'returned')", [id]);
+    if (inReview) throw new PeopleError("Finish or cancel the document request before archiving this upload.");
     const { rows } = await client.query<{ name: string; employeeId: string | null }>(
-      `UPDATE documents d SET archived_at = now() WHERE d.id = $1 AND d.category <> 'receipt' AND ${current} RETURNING name, employee_id AS "employeeId"`, [id],
+      `UPDATE documents d SET archived_at = now() WHERE d.id = $1 AND d.category <> 'receipt' AND ${currentDocumentSql} RETURNING name, employee_id AS "employeeId"`, [id],
     );
     if (!rows[0]) throw new PeopleError("This document is already archived.");
     await audit(client, member, "document.archived", { employeeId: rows[0].employeeId ?? undefined, detail: rows[0].name });
@@ -118,7 +121,7 @@ export function acknowledgeDocument(member: Member, id: string) {
   return runAsMember(member, async (client, actor) => {
     const employeeId = await requireOwnEmployee(client, actor);
     const { rows } = await client.query<{ name: string }>(
-      `SELECT d.name FROM documents d WHERE d.id = $1 AND d.needs_acknowledgement AND ${current} AND (d.employee_id IS NULL OR d.employee_id = $2)`, [id, employeeId],
+      `SELECT d.name FROM documents d WHERE d.id = $1 AND d.needs_acknowledgement AND ${currentDocumentSql} AND (d.employee_id IS NULL OR d.employee_id = $2)`, [id, employeeId],
     );
     if (!rows[0]) throw new PeopleError("This document no longer needs your acknowledgement. Reload the page to see the latest version.");
     const { rowCount } = await client.query("INSERT INTO document_acknowledgements (document_id, employee_id) VALUES ($1, $2) ON CONFLICT DO NOTHING", [id, employeeId]);
@@ -131,7 +134,7 @@ const columns = `d.id, d.name, d.category, d.size_bytes AS "sizeBytes", d.create
   EXISTS (SELECT 1 FROM document_acknowledgements a WHERE a.document_id = d.id AND a.employee_id = $2::uuid) AS acknowledged,
   (SELECT count(*)::int FROM document_acknowledgements a JOIN employees p ON p.id = a.employee_id AND p.status <> 'archived' WHERE a.document_id = d.id) AS "acknowledgedCount",
   CASE WHEN d.employee_id IS NULL THEN (SELECT count(*)::int FROM employees WHERE status <> 'archived') ELSE 1 END AS "expectedCount"`;
-const visible = `FROM documents d LEFT JOIN employees e ON e.id = d.employee_id WHERE ${current} AND d.category <> 'receipt' AND ($1 = 'admin' OR d.employee_id IS NULL OR d.employee_id = $2::uuid)`;
+const visible = `FROM documents d LEFT JOIN employees e ON e.id = d.employee_id WHERE ${currentDocumentSql} AND d.category <> 'receipt' AND ($1 = 'admin' OR d.employee_id IS NULL OR d.employee_id = $2::uuid)`;
 
 // Viewers see company documents and their own. Receipts stay with their expense.
 export async function listDocuments(member: Member, employeeId?: string) {
@@ -187,14 +190,14 @@ export async function documentDetail(id: string) {
 export async function readDocument(member: Member, id: string) {
   const { rows } = await pool().query<{ name: string; mediaType: string; content: Buffer }>(
     `SELECT d.name, d.media_type AS "mediaType", d.content FROM documents d LEFT JOIN employees e ON e.id = d.employee_id
-     WHERE d.id = $1 AND ($2 = 'admin' OR ${current} AND (
+     WHERE d.id = $1 AND ($2 = 'admin' OR ${currentDocumentSql} AND (
        d.employee_id IS NOT DISTINCT FROM NULL AND d.category <> 'receipt' OR d.employee_id = $3 OR (d.category = 'receipt' AND e.manager_id = $3)
      ))`, [id, member.role, member.employeeId],
   );
   return rows[0] ?? null;
 }
 
-const requestColumns = `r.id, r.employee_id AS "employeeId", concat_ws(' ', e.first_name, e.last_name) AS "employeeName", r.title, r.instructions, r.category, to_char(r.due_on, 'YYYY-MM-DD') AS "dueOn", r.state,
+const requestColumns = `e.status = 'archived' AS "employeeArchived", r.id, r.employee_id AS "employeeId", (concat_ws(' ', e.first_name, e.last_name) || CASE WHEN e.status='archived' THEN ' (archived)' ELSE '' END) AS "employeeName", r.title, r.instructions, r.category, to_char(r.due_on, 'YYYY-MM-DD') AS "dueOn", r.state,
   r.return_note AS "returnNote", r.document_id AS "documentId", r.created_at AS "createdAt"`;
 
 // People who already have the same request open are skipped, so asking a team again only reaches the rest.
@@ -246,7 +249,7 @@ export function reviewDocumentRequest(member: Member, input: z.infer<typeof docu
   return runAsAdmin(member, async (client) => {
     const allowed = input.decision === "cancelled" ? ["open", "submitted", "returned"] : ["submitted"];
     const { rows } = await client.query<{ employeeId: string; title: string }>(
-      `UPDATE document_requests SET state = $2, return_note = $3, decided_by = $4, decided_at = now() WHERE id = $1 AND state = ANY($5::text[]) RETURNING employee_id AS "employeeId", title`,
+      `UPDATE document_requests SET state = $2, return_note = $3, decided_by = $4, decided_at = now() WHERE id = $1 AND state = ANY($5::text[]) AND ($2 <> 'returned' OR EXISTS (SELECT 1 FROM employees e WHERE e.id=document_requests.employee_id AND e.status <> 'archived')) RETURNING employee_id AS "employeeId", title`,
       [input.id, input.decision, input.decision === "returned" ? input.note : "", member.id, allowed],
     );
     if (!rows[0]) throw new PeopleError("This request was already decided. Reload the page.");
@@ -270,7 +273,7 @@ export async function ownDocumentRequests(member: Member) {
 export async function listDocumentRequests(member: Member, states: DocumentRequestState[], limit = 200) {
   if (member.role !== "admin") return [];
   const { rows } = await pool().query<DocumentRequest>(
-    `SELECT ${requestColumns} FROM document_requests r JOIN employees e ON e.id = r.employee_id WHERE r.state = ANY($1::text[]) AND e.status <> 'archived' ORDER BY r.due_on NULLS LAST, r.created_at, r.id LIMIT $2`, [states, limit],
+    `SELECT ${requestColumns} FROM document_requests r JOIN employees e ON e.id = r.employee_id WHERE r.state = ANY($1::text[]) ORDER BY r.due_on NULLS LAST, r.created_at, r.id LIMIT $2`, [states, limit],
   );
   return rows;
 }
@@ -278,7 +281,7 @@ export async function listDocumentRequests(member: Member, states: DocumentReque
 export async function expiringDocuments(member: Member, day = today()) {
   const { rows } = await pool().query<{ id: string; name: string; employeeId: string | null; employeeName: string | null; expiresOn: string }>(
     `SELECT d.id, d.name, d.employee_id AS "employeeId", concat_ws(' ', e.first_name, e.last_name) AS "employeeName", to_char(d.expires_on, 'YYYY-MM-DD') AS "expiresOn"
-     FROM documents d LEFT JOIN employees e ON e.id = d.employee_id WHERE ${current} AND d.expires_on <= $3 AND coalesce(e.status, '') <> 'archived' AND ($1 = 'admin' OR d.employee_id = $2) ORDER BY d.expires_on, d.id LIMIT 20`,
+     FROM documents d LEFT JOIN employees e ON e.id = d.employee_id WHERE ${currentDocumentSql} AND d.expires_on <= $3 AND coalesce(e.status, '') <> 'archived' AND ($1 = 'admin' OR d.employee_id = $2) ORDER BY d.expires_on, d.id LIMIT 20`,
     [member.role, member.employeeId, addDays(day, expiryNoticeDays)],
   );
   return rows;
@@ -288,7 +291,7 @@ export async function expiringDocuments(member: Member, day = today()) {
 export async function notifyExpiring(client: PoolClient, day = today()) {
   const until = addDays(day, expiryNoticeDays);
   const { rows: documents } = await client.query<{ id: string; name: string; employeeId: string | null }>(
-    `UPDATE documents d SET expiry_notified_at = now() WHERE d.expires_on BETWEEN $1 AND $2 AND d.expiry_notified_at IS NULL AND ${current}
+    `UPDATE documents d SET expiry_notified_at = now() WHERE d.expires_on BETWEEN $1 AND $2 AND d.expiry_notified_at IS NULL AND ${currentDocumentSql}
      AND NOT EXISTS (SELECT 1 FROM employees e WHERE e.id = d.employee_id AND e.status = 'archived') RETURNING d.id, d.name, d.employee_id AS "employeeId"`, [day, until],
   );
   for (const document of documents) {

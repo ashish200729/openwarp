@@ -249,10 +249,21 @@ test("records, signatures and onboarding follow each role", async ({ page, brows
     await checkPage(page);
     await own.goto(terms);
     await expect(own.getByRole("button", { name: "Sign document" })).toHaveCount(0);
+    // A later profile edit must not change the signer identity captured with the sent file.
+    await page.goto(`${nora}/edit`);
+    await page.getByLabel("Last name").fill("Quillon-New");
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await expect(page.getByRole("heading", { name: "Nora Quillon-New", exact: true })).toBeVisible();
     const file = await own.request.get(`${terms}/file`);
     expect(file.headers()["content-disposition"]).toContain("attachment");
     await own.reload();
     await expect(own.getByRole("button", { name: "Sign document" })).toBeVisible();
+    await expect(own.getByText("Type it as Nora Quillon.", { exact: true })).toBeVisible();
+    await page.goto(`${nora}/edit`);
+    await page.getByLabel("Last name").fill("Quillon");
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await expect(page.getByRole("heading", { name: "Nora Quillon", exact: true })).toBeVisible();
+    await page.goto(terms);
     await page.locator("summary").filter({ hasText: "Void this document" }).click();
     await page.getByLabel("Reason for voiding").fill("Wrong file");
     await page.getByRole("button", { name: "Void", exact: true }).click();

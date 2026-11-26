@@ -5,7 +5,7 @@ import { panelStyle, primaryButton, secondaryButton, textButton, textLink } from
 import { ActionForm, Field } from "@/components/workspace/action-form";
 import { BackLink, Empty, PageHeader, Section } from "@/components/workspace/presentation";
 import { SignatureList } from "@/components/workspace/record-fields";
-import { SignerFields } from "@/components/workspace/signature-fields";
+import { SignerFields, TemplateSignerFields } from "@/components/workspace/signature-fields";
 import { readOrg } from "@/lib/server/insights";
 import { requireMember } from "@/lib/server/member";
 import { listSignatures } from "@/lib/server/signatures";
@@ -30,7 +30,7 @@ export default async function SignaturesPage({ searchParams }: { searchParams: P
     {source && <section className={`${panelStyle} mb-8 max-w-2xl p-5`}>
       <h2 className="mb-4 text-[15px] font-semibold">{source === "template" ? "Prepare from a template" : "Prepare from a PDF"}</h2>
       {source === "template" ? templates.length ? <ActionForm action={createFromTemplateAction} submit="Prepare draft" pending="Preparing…" secondary={close}>
-        <Field name="templateId" label="Template" required options={templates.map((template) => ({ value: template.id, label: template.starter ? `${template.name} (starting point)` : template.name }))} />{signers}
+        <TemplateSignerFields templates={templates.map(({ id, name, version, starter, signatoryId, signerOrder }) => ({ id, name, version, starter, signatoryId, signerOrder }))} people={people} signatories={signatories} employeeId={query.employee} />
         <p className="text-[13px] text-muted">Nothing is sent yet. You’ll see the finished text first.</p>
       </ActionForm> : <p className="text-sm">There are no templates. <Link href="/workspace/settings/templates?new=1" className={textLink}>Write one</Link> or use a PDF.</p>
       : <ActionForm action={createFromFileAction} submit="Prepare draft" pending="Uploading…" secondary={close}>

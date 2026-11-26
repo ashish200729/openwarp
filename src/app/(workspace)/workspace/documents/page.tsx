@@ -13,15 +13,16 @@ import { addDocumentAction } from "./actions";
 
 export const metadata: Metadata = { title: "Documents" };
 
-export default async function DocumentsPage({ searchParams }: { searchParams: Promise<{ new?: string; saved?: string; employee?: string; q?: string; category?: string; folder?: string; page?: string }> }) {
+export default async function DocumentsPage({ searchParams }: { searchParams: Promise<{ new?: string; saved?: string; employee?: string; q?: string; category?: string; folder?: string; page?: string; companyPage?: string }> }) {
   const member = await requireMember();
   const query = await searchParams;
   const canManage = member.role === "admin";
   const adding = canManage && query.new === "1";
   const filters = documentFilters(query);
+  const companyFilters = documentFilters({ ...query, page: query.companyPage });
   const filtered = Boolean(filters.query || filters.category || filters.folder);
-  const [company, personal, folders, people] = await Promise.all([searchDocuments(member, "company", { ...filters, page: 1 }, 200), searchDocuments(member, "personal", filters), listFolders(member), adding ? readOrg(member) : []]);
-  const url = (page: number) => `/workspace/documents?${new URLSearchParams({ q: filters.query, category: filters.category, folder: filters.folder, page: String(page) })}`;
+  const [company, personal, folders, people] = await Promise.all([searchDocuments(member, "company", companyFilters), searchDocuments(member, "personal", filters), listFolders(member), adding ? readOrg(member) : []]);
+  const url = (page: number, companyPage: number) => `/workspace/documents?${new URLSearchParams({ q: filters.query, category: filters.category, folder: filters.folder, page: String(page), companyPage: String(companyPage) })}`;
   const nothing = filtered ? "No documents match." : null;
   return <>
     <PageHeader title="Documents" description="Company documents are visible to everyone. Personal documents are visible to that person and administrators." actions={<>
@@ -47,7 +48,7 @@ export default async function DocumentsPage({ searchParams }: { searchParams: Pr
       <button type="submit" className={secondaryButton}>Filter</button>
       {filtered && <Link href="/workspace/documents" className={textLink}>Clear</Link>}
     </form>}
-    <Section title="Company" className="mb-9">{company.documents.length ? <DocumentList documents={company.documents} canManage={canManage} employeeId={member.employeeId} /> : <Empty>{nothing ?? "No company documents yet."}</Empty>}</Section>
-    <Section title={canManage ? "Personal" : "Yours"}>{personal.documents.length ? <DocumentList documents={personal.documents} canManage={canManage} employeeId={member.employeeId} /> : <Empty>{nothing ?? "No personal documents yet."}</Empty>}<Pagination page={personal.page} pages={personal.pages} url={url} /></Section>
+    <Section title="Company" className="mb-9">{company.documents.length ? <DocumentList documents={company.documents} canManage={canManage} employeeId={member.employeeId} /> : <Empty>{nothing ?? "No company documents yet."}</Empty>}<Pagination page={company.page} pages={company.pages} url={n => url(personal.page, n)} /></Section>
+    <Section title={canManage ? "Personal" : "Yours"}>{personal.documents.length ? <DocumentList documents={personal.documents} canManage={canManage} employeeId={member.employeeId} /> : <Empty>{nothing ?? "No personal documents yet."}</Empty>}<Pagination page={personal.page} pages={personal.pages} url={n => url(n, company.page)} /></Section>
   </>;
 }

@@ -150,7 +150,7 @@ export const signatureTemplateFields = z.object({
 }).refine((value) => !value.includeNewHires || chosenTypes(value).length, { path: ["name"], message: "Choose at least one employment type for new hires." });
 
 const signers = { employeeId: z.uuid("Choose a person."), signatoryId: z.string().max(100).default("").transform((value) => value || null), signerOrder: z.enum(signerOrders) };
-export const templateSignatureFields = z.object({ templateId: z.uuid("Choose a template."), ...signers });
+export const templateSignatureFields = z.object({ templateId: z.uuid("Choose a template."), templateVersion: z.coerce.number().int().positive(), ...signers });
 export const fileSignatureFields = z.object({ title: z.string().trim().min(1, "Enter a name.").max(120), ...signers });
 export const draftFields = z.object({ id: z.uuid(), version, title: z.string().trim().min(1, "Enter a name.").max(120), body: templateBody });
 export const sendFields = z.object({ id: z.uuid(), version });

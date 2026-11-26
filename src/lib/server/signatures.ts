@@ -95,15 +95,15 @@ async function insertRequest(client: PoolClient, member: Member, draft: Draft) {
   return id;
 }
 
-async function templateDraft(client: PoolClient, templateId: string) {
-  const { rows } = await client.query<{ name: string; body: string }>("SELECT name, body FROM signature_templates WHERE id = $1 AND archived_at IS NULL", [templateId]);
-  if (!rows[0]) throw new PeopleError("This template was archived. Choose another one.");
+async function templateDraft(client: PoolClient, templateId: string, version: number) {
+  const { rows } = await client.query<{ name: string; body: string }>("SELECT name, body FROM signature_templates WHERE id = $1 AND version = $2 AND archived_at IS NULL", [templateId, version]);
+  if (!rows[0]) throw new PeopleError("This template changed or was archived. Reload the templates before preparing a draft.");
   return rows[0];
 }
 
 export function createFromTemplate(member: Member, input: z.infer<typeof templateSignatureFields>) {
   return runAsAdmin(member, async (client) => {
-    const { name, body } = await templateDraft(client, input.templateId);
+    const { name, body } = await templateDraft(client, input.templateId, input.templateVersion);
     return insertRequest(client, member, { ...input, title: name, body });
   });
 }
@@ -149,6 +149,11 @@ async function send(client: PoolClient, member: Member, request: Pick<Open, "id"
     if (missing.length) throw new PeopleError("Some merge fields have no value yet. Fill them in on the person’s record or take them out of the text.");
     await client.query("INSERT INTO signature_contents (request_id, body, sha256) VALUES ($1, $2, $3)", [request.id, body, digest(body)]);
   }
+  await client.query(
+    `INSERT INTO signature_signer_names (signer_id, name)
+     SELECT s.id, coalesce(u.name, concat_ws(' ', e.first_name, e.last_name)) FROM signature_signers s
+     LEFT JOIN "user" u ON u.id = s.user_id LEFT JOIN employees e ON e.id = s.employee_id WHERE s.request_id = $1`, [request.id],
+  );
   const { rows: [content] } = await client.query<{ sha256: string }>("SELECT sha256 FROM signature_contents WHERE request_id = $1", [request.id]);
   await client.query("UPDATE signature_requests SET state = 'pending', sent_at = now(), version = version + 1 WHERE id = $1", [request.id]);
   await appendEvent(client, { requestId: request.id, event: "sent", userId: member.id, contentSha256: content.sha256 });
@@ -209,8 +214,11 @@ export async function signDocument(member: Member, input: z.infer<typeof signFie
     const request = await readOpen(client, input.id, ["pending"]);
     const signer = await requireMyTurn(client, member, actor, input.id);
     if (signer.kind === "employee") await requireOwnEmployee(client, actor);
-    const { rows: [{ name }] } = signer.kind === "company" ? await client.query<{ name: string }>('SELECT name FROM "user" WHERE id = $1', [member.id])
-      : await client.query<{ name: string }>("SELECT concat_ws(' ', first_name, last_name) AS name FROM employees WHERE id = $1", [signer.employeeId]);
+    const { rows: [{ name }] } = await client.query<{ name: string }>(
+      `SELECT coalesce(snapshot.name, u.name, concat_ws(' ', e.first_name, e.last_name)) AS name FROM signature_signers s
+       LEFT JOIN signature_signer_names snapshot ON snapshot.signer_id=s.id LEFT JOIN "user" u ON u.id=s.user_id
+       LEFT JOIN employees e ON e.id=s.employee_id WHERE s.id=$1`, [signer.id],
+    );
     if (!sameName(name, input.typedName)) throw new PeopleError(`Type your full name as it appears on this document: ${name}.`);
     const content = await readContent(client, input.id);
     const shown = Buffer.from(input.sha256, "hex");
@@ -244,14 +252,25 @@ export function declineSignature(member: Member, input: { id: string; reason: st
   });
 }
 
+async function voidOpenSignature(client: PoolClient, member: Member, request: Pick<Open, "id" | "employeeId" | "title" | "state">, reason: string) {
+  await appendEvent(client, { requestId: request.id, event: "voided", userId: member.id, reason });
+  await client.query("UPDATE signature_requests SET state = 'voided', closed_at = now(), version = version + 1 WHERE id = $1", [request.id]);
+  await audit(client, member, "signature.voided", { employeeId: request.employeeId, detail: request.title });
+  if (request.state === "pending") await notify(client, member, { employeeId: request.employeeId }, { title: `${request.title} no longer needs your signature`, href: `/workspace/documents/signatures/${request.id}` });
+}
+
 export function voidSignature(member: Member, input: { id: string; reason: string }) {
-  return runAsAdmin(member, async (client) => {
+  return runAsAdmin(member, async client => {
     const request = await readOpen(client, input.id, ["draft", "pending", "declined"]);
-    await appendEvent(client, { requestId: input.id, event: "voided", userId: member.id, reason: input.reason });
-    await client.query("UPDATE signature_requests SET state = 'voided', closed_at = now(), version = version + 1 WHERE id = $1", [input.id]);
-    await audit(client, member, "signature.voided", { employeeId: request.employeeId, detail: request.title });
-    if (request.state === "pending") await notify(client, member, { employeeId: request.employeeId }, { title: `${request.title} no longer needs your signature`, href: `/workspace/documents/signatures/${input.id}` });
+    await voidOpenSignature(client, member, request, input.reason);
   });
+}
+
+export async function closeEmployeeSignatures(client: PoolClient, member: Member, employeeId: string) {
+  const { rows } = await client.query<Pick<Open, "id" | "title" | "state" | "employeeId">>(
+    `SELECT id,title,state,employee_id AS "employeeId" FROM signature_requests WHERE employee_id=$1 AND state IN ('draft','pending') FOR UPDATE`, [employeeId],
+  );
+  for (const row of rows) await voidOpenSignature(client, member, row, "Employee profile archived");
 }
 
 // Administrators see every document. A signer sees the ones they were sent.
@@ -267,9 +286,9 @@ export async function readSignature(member: Member, id: string): Promise<Signatu
   if (!row) return null;
   const [signers, events] = await Promise.all([
     pool().query<Signer>(
-      `SELECT s.id, s.kind, coalesce(u.name, concat_ws(' ', e.first_name, e.last_name)) AS name, s.employee_id AS "employeeId", s.user_id AS "userId", v.happened_at AS "signedAt",
+      `SELECT s.id, s.kind, coalesce(snapshot.name, v.typed_name, u.name, concat_ws(' ', e.first_name, e.last_name)) AS name, s.employee_id AS "employeeId", s.user_id AS "userId", v.happened_at AS "signedAt",
        EXISTS (SELECT 1 FROM workspace_members m WHERE m.role <> 'disabled' AND (m.user_id = s.user_id OR m.employee_id = s.employee_id)) AS "hasAccount"
-       FROM signature_signers s LEFT JOIN "user" u ON u.id = s.user_id LEFT JOIN employees e ON e.id = s.employee_id LEFT JOIN signature_events v ON v.signer_id = s.id AND v.event = 'signed' WHERE s.request_id = $1 ORDER BY s.position`, [id],
+       FROM signature_signers s LEFT JOIN signature_signer_names snapshot ON snapshot.signer_id=s.id LEFT JOIN "user" u ON u.id = s.user_id LEFT JOIN employees e ON e.id = s.employee_id LEFT JOIN signature_events v ON v.signer_id = s.id AND v.event = 'signed' WHERE s.request_id = $1 ORDER BY s.position`, [id],
     ),
     pool().query<SignatureEvent>(
       `SELECT v.id::text, v.event, v.signer_id AS "signerId", v.user_id AS "userId", u.name AS "userName", v.typed_name AS "typedName", v.consent_text AS "consentText", v.content_sha256 AS "contentSha256", v.ip_hash AS "ipHash", v.confirmed_by AS "confirmedBy", v.user_agent AS "userAgent", v.reason, v.happened_at AS "happenedAt", v.seal
