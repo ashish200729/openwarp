@@ -6,7 +6,7 @@ import { addDays, today } from "@/lib/operations";
 import { employmentLabels, formatDate, type EmployeeStatus, type EmploymentType } from "@/lib/people";
 import { pool } from "./db";
 import { requireAdmin, type Member } from "./member";
-import { audit, PeopleError, requireOwnEmployee, runAsAdmin, runAsMember } from "./write";
+import { audit, ensureCurrentTeam, PeopleError, requireOwnEmployee, runAsAdmin, runAsMember } from "./write";
 
 export type Course = {
   id: string; title: string; summary: string; passPercent: number; maxAttempts: number | null; repeatMonths: number | null; published: boolean; version: number;
@@ -18,7 +18,7 @@ export type AnsweredQuestion = Question & { correct: number };
 export type Rule = { id: string; teamName: string | null; employmentType: EmploymentType | null; dueDays: number };
 export type Attempt = { id: string; correct: number; total: number; passed: boolean; at: Date };
 export type Assignment = {
-  id: string; courseId: string; title: string; employeeId: string; employeeName: string; teamName: string | null; state: "open" | "completed"; opensOn: string; dueOn: string | null; overdue: boolean; upcoming: boolean;
+  id: string; courseId: string; title: string; employeeId: string; employeeName: string; teamName: string | null; state: "open" | "completed" | "cancelled"; opensOn: string; dueOn: string | null; overdue: boolean; upcoming: boolean;
   lessonsDone: number; lessons: number; attempts: number; completionId: string | null; scorePercent: number | null; completedOn: string | null; expiresOn: string | null;
 };
 export type Certificate = { id: string; courseTitle: string; employeeName: string; scorePercent: number | null; completedOn: string; expiresOn: string | null };
@@ -70,7 +70,7 @@ async function readLessons(courseId: string, assignmentId: string | null) {
 // An export passes the connection that already holds the write lock.
 async function courseAssignments(db: Pick<PoolClient, "query">, courseId: string | null) {
   const { rows } = await db.query<Assignment>(
-    `SELECT ${assignmentColumns} ${assignmentFrom} WHERE a.state <> 'cancelled' AND c.archived_at IS NULL AND ${current} AND ($1::uuid IS NULL OR c.id = $1) ORDER BY lower(c.title), a.state DESC, a.due_on NULLS LAST, lower(e.last_name), e.id, a.created_at DESC LIMIT 5000`, [courseId],
+    `SELECT ${assignmentColumns} ${assignmentFrom} WHERE ($1::uuid IS NULL OR c.id = $1) ORDER BY lower(c.title), a.state DESC, a.due_on NULLS LAST, lower(e.last_name), e.id, a.created_at DESC LIMIT 5000`, [courseId],
   );
   return rows;
 }
@@ -91,7 +91,7 @@ export async function employeeTraining(member: Member, employeeId: string) {
     if (!rowCount) return null;
   }
   const { rows } = await pool().query<Assignment>(
-    `SELECT ${assignmentColumns} ${assignmentFrom} WHERE a.employee_id = $1 AND a.state <> 'cancelled' AND (a.state = 'completed' OR ${offered}) ORDER BY a.state DESC, a.due_on NULLS LAST, x.completed_on DESC, a.id LIMIT 200`, [employeeId],
+    `SELECT ${assignmentColumns} ${assignmentFrom} WHERE a.employee_id = $1 AND (a.state IN ('completed','cancelled') OR ${offered}) ORDER BY a.state DESC, a.due_on NULLS LAST, x.completed_on DESC, a.id LIMIT 200`, [employeeId],
   );
   return { full, assignments: full ? rows : rows.map((row) => ({ ...row, attempts: 0, scorePercent: null, completionId: null })) };
 }
@@ -140,6 +140,7 @@ async function currentCourse(client: PoolClient, id: string) {
 
 export function saveCourse(member: Member, input: z.infer<typeof courseFields>) {
   return runAsAdmin(member, async (client) => {
+    if (input.id && (await currentCourse(client, input.id)).passPercent !== input.passPercent) await requireEditableQuiz(client, input.id);
     const values = [input.title, input.summary, input.passPercent, input.maxAttempts, input.repeatMonths];
     const { rows: [course] } = input.id ? await client.query<{ id: string }>(
       "UPDATE courses SET title = $1, summary = $2, pass_percent = $3, max_attempts = $4, repeat_months = $5, version = version + 1 WHERE id = $6 AND version = $7 AND archived_at IS NULL RETURNING id", [...values, input.id, input.version],
@@ -199,9 +200,17 @@ export function commandLesson(member: Member, input: z.infer<typeof lessonComman
   });
 }
 
+async function requireEditableQuiz(client: PoolClient, courseId: string) {
+  const { rowCount } = await client.query(
+    "SELECT 1 FROM training_assignments a JOIN quiz_attempts q ON q.assignment_id=a.id WHERE a.course_id=$1 AND a.state='open' LIMIT 1", [courseId],
+  );
+  if (rowCount) throw new PeopleError("People are working on this quiz. Finish or cancel those assignments before changing the questions or pass mark.");
+}
+
 export function addQuestion(member: Member, input: z.infer<typeof questionFields>) {
   return runAsAdmin(member, async (client) => {
     const course = await currentCourse(client, input.courseId);
+    await requireEditableQuiz(client, input.courseId);
     await client.query("INSERT INTO course_questions (course_id, position, prompt, options, correct) SELECT $1, coalesce(max(position), 0) + 1, $2, $3, $4 FROM course_questions WHERE course_id = $1", [input.courseId, input.prompt, input.options, input.correct]);
     await audit(client, member, "course.updated", { detail: course.title });
   });
@@ -212,6 +221,7 @@ export function removeQuestion(member: Member, id: string) {
     const { rows: [question] } = await client.query<{ courseId: string }>(`SELECT course_id AS "courseId" FROM course_questions WHERE id = $1 AND removed_at IS NULL`, [id]);
     if (!question) return;
     const course = await currentCourse(client, question.courseId);
+    await requireEditableQuiz(client, question.courseId);
     if (course.published && course.items < 2) throw new PeopleError("A published course needs at least one lesson or question.");
     await client.query("UPDATE course_questions SET removed_at = now() WHERE id = $1", [id]);
     await audit(client, member, "course.updated", { detail: course.title });
@@ -220,6 +230,7 @@ export function removeQuestion(member: Member, id: string) {
 
 export function addRule(member: Member, input: z.infer<typeof ruleFields>) {
   return runAsAdmin(member, async (client) => {
+    await ensureCurrentTeam(client, input.teamId);
     const course = await currentCourse(client, input.courseId);
     const { rowCount } = await client.query("INSERT INTO course_rules (course_id, team_id, employment_type, due_days) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING", [input.courseId, input.teamId, input.employmentType, input.dueDays]);
     if (!rowCount) throw new PeopleError("That rule already exists.");

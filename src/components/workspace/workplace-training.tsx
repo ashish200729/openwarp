@@ -6,6 +6,7 @@ import { formatDate } from "@/lib/people";
 import type { Assignment, Lesson } from "@/lib/server/training";
 
 export function TrainingStatus({ entry }: { entry: Assignment }) {
+  if (entry.state === "cancelled") return <StatusText tone="muted">Cancelled</StatusText>;
   if (entry.state === "completed") return <StatusText tone="positive">Completed</StatusText>;
   if (entry.upcoming) return <StatusText tone="muted">Opens {formatDate(entry.opensOn)}</StatusText>;
   if (entry.overdue) return <StatusText tone="danger">Overdue</StatusText>;
@@ -13,6 +14,7 @@ export function TrainingStatus({ entry }: { entry: Assignment }) {
 }
 
 export function trainingDetail(entry: Assignment) {
+  if (entry.state === "cancelled") return `${entry.lessonsDone} of ${entry.lessons} lessons recorded`;
   if (entry.state === "completed") return [`Completed ${entry.completedOn ? formatDate(entry.completedOn) : ""}`, entry.scorePercent === null ? "" : `${entry.scorePercent}%`, entry.expiresOn ? `valid until ${formatDate(entry.expiresOn)}` : ""].filter(Boolean).join(", ");
   return [entry.dueOn ? `Due ${formatDate(entry.dueOn)}` : "No due date", entry.lessons ? `${entry.lessonsDone} of ${entry.lessons} lessons` : ""].filter(Boolean).join(", ");
 }
