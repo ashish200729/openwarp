@@ -274,3 +274,35 @@ test("time tracking, scheduling and time off policies follow each role", async (
     await manager.close();
   }
 });
+
+test("approved time off stays on the shared calendar while its owner is offboarding", async ({ page }) => {
+  const name = "Wren Leaver";
+  await signIn(page, "admin@openwarp.example", adminPassword);
+  await page.goto("/workspace/people/new");
+  await page.getByLabel("First name").fill("Wren");
+  await page.getByLabel("Last name").fill("Leaver");
+  await page.getByLabel("Work email").fill("wren.leaver@openwarp.example");
+  await page.getByLabel("Job title").fill("Support specialist");
+  await page.getByLabel("Start date").fill("2025-01-06");
+  await page.getByLabel("Starting status").selectOption("active");
+  await page.getByRole("button", { name: "Add employee" }).click();
+  await expect(page.getByRole("heading", { name, exact: true })).toBeVisible();
+  const profile = new URL(page.url()).pathname;
+
+  await page.goto("/workspace/time-off?record=1");
+  await page.getByLabel("Person", { exact: true }).selectOption({ label: name });
+  await page.getByLabel("Type").selectOption({ label: "Vacation" });
+  await page.getByLabel("First day").fill(leaveDay);
+  await page.getByLabel("Last day off").fill(leaveDay);
+  await page.getByRole("button", { name: "Enter time off" }).click();
+  await saved(page, "Time off entered and approved.");
+
+  // Someone working out their notice is still employed, so their approved leave stays visible.
+  await page.goto(profile);
+  await page.getByRole("link", { name: "Start offboarding" }).click();
+  await page.getByLabel("Last day").fill(`${nextYear}-03-31`);
+  await page.getByRole("button", { name: "Start offboarding" }).click();
+  await expect(page.getByRole("heading", { name: "Offboarding checklist" })).toBeVisible();
+  await page.goto(`/workspace/time-off?month=${leaveDay.slice(0, 7)}`);
+  await expect(page.getByRole("table", { name: /^Approved time off in/ }).getByRole("link", { name })).toBeVisible();
+});

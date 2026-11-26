@@ -206,11 +206,13 @@ export async function timeOffBalances(employeeId: string, year: number) {
 }
 
 // The shared calendar shows that someone is away. The type and note stay with the employee and their deciders.
+// Anyone still on the books counts, including people working out their notice: leave can only be booked
+// inside their employment dates, so only archived records drop out.
 export async function listAbsences(start: string, end: string) {
   const { rows } = await pool().query<Absence>(
     `SELECT e.id AS "employeeId", concat_ws(' ', e.first_name, e.last_name) AS name, to_char(r.starts_on, 'YYYY-MM-DD') AS "startsOn", to_char(r.ends_on, 'YYYY-MM-DD') AS "endsOn"
      FROM time_off_requests r JOIN employees e ON e.id = r.employee_id
-     WHERE r.state = 'approved' AND e.status = 'active' AND r.starts_on <= $2 AND r.ends_on >= $1 ORDER BY r.starts_on, lower(e.last_name), e.id LIMIT 300`, [start, end],
+     WHERE r.state = 'approved' AND e.status <> 'archived' AND r.starts_on <= $2 AND r.ends_on >= $1 ORDER BY r.starts_on, lower(e.last_name), e.id LIMIT 300`, [start, end],
   );
   return rows;
 }
