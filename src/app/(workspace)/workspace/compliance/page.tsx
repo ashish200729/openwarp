@@ -38,7 +38,7 @@ export default async function CompliancePage({ searchParams }: { searchParams: P
       <Link href="/workspace/compliance/register?new=1" className={primaryButton}><PlusIcon aria-hidden="true" size={15} weight="bold" /> Add obligation</Link>
     </>} />
     <ComplianceNav current="" />
-    <FigureRow><Figure label="Overdue" value={all.filter((item) => item.overdue).length} /><Figure label="Due in 30 days" value={all.filter((item) => !item.overdue && item.dueOn <= soon).length} /><Figure label="Open notices" value={notices.length} href="/workspace/compliance/notices" /></FigureRow>
+    <FigureRow><Figure label="Overdue" value={overdue.length} /><Figure label="Due in 30 days" value={upcoming.filter((item) => item.dueOn <= soon).length} /><Figure label="Open notices" value={notices.length} href="/workspace/compliance/notices" /></FigureRow>
     {all.length > 0 && <Filters label="Filter obligations" action="/workspace/compliance" clear={category && "/workspace/compliance"} fields={[{ name: "category", label: "Category", value: category, options: [{ value: "", label: "Every category" }, ...obligationCategories.map((value) => ({ value, label: obligationLabels[value] }))] }]} />}
     {!all.length && <div className="mb-9"><EmptyState title="No dates yet" description="Add the filings, registrations and renewals your company keeps." /></div>}
     {all.length > 0 && !items.length && <Empty>Nothing in this category.</Empty>}
