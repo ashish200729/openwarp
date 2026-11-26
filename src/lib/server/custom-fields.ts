@@ -52,18 +52,20 @@ export function editableFields(member: Member, fields: CustomValue[]) {
 
 export function saveCustomValues(member: Member, employeeId: string, input: Record<string, unknown>) {
   return runAsMember(member, async (client, actor) => {
-    const source = await requireRecordOwner(client, actor, employeeId);
+    let source = await requireRecordOwner(client, actor, employeeId);
     const fields = await readValues(client, employeeId, ["everyone", "private", "admin"]);
     const changed: string[] = [];
     for (const field of fields) {
       const entered = input[`field_${field.id}`];
-      if (entered === undefined || source === "self" && (!field.employeeEditable || field.visibility === "admin")) continue;
+      const restricted = !field.employeeEditable || field.visibility === "admin";
+      if (entered === undefined || (restricted && actor.role !== "admin")) continue;
       const parsed = customValue(field.kind, field.options).safeParse(entered);
       if (!parsed.success) throw new PeopleError(`Check ${field.label} and try again.`);
       const next = parsed.data as string;
       if (next === field.value) continue;
       if (next) await client.query("INSERT INTO custom_field_values (field_id, employee_id, value) VALUES ($1, $2, $3) ON CONFLICT (field_id, employee_id) DO UPDATE SET value = excluded.value, updated_at = now()", [field.id, employeeId, next]);
       else await client.query("DELETE FROM custom_field_values WHERE field_id = $1 AND employee_id = $2", [field.id, employeeId]);
+      if (restricted) source = "admin";
       changed.push(field.label);
     }
     await recordChanges(client, member, employeeId, source, changed);
@@ -102,13 +104,16 @@ export function setCustomFieldArchived(member: Member, id: string, archive: bool
   });
 }
 
-export function exportCustomFields(member: Member) {
+export function exportCustomFields(member: Member, search = "") {
   return runAsAdmin(member, async (client) => {
     const { rows: fields } = await client.query<{ id: string; label: string; kind: CustomFieldKind }>("SELECT id, label, kind FROM custom_fields WHERE archived_at IS NULL ORDER BY position, id");
     const { rows: people } = await client.query<{ name: string; email: string; values: Record<string, string> }>(
       `SELECT concat_ws(' ', e.first_name, e.last_name) AS name, e.email, coalesce(jsonb_object_agg(v.field_id, v.value) FILTER (WHERE v.field_id IS NOT NULL), '{}') AS values
-       FROM employees e LEFT JOIN custom_field_values v ON v.employee_id = e.id WHERE e.status <> 'archived' GROUP BY e.id ORDER BY lower(e.last_name), lower(e.first_name), e.id LIMIT 10000`,
+       FROM employees e LEFT JOIN custom_field_values v ON v.employee_id = e.id WHERE e.status <> 'archived'
+       AND ($1 = '' OR strpos(lower(concat_ws(' ', e.first_name, e.last_name, e.email)), lower($1)) > 0)
+       GROUP BY e.id ORDER BY lower(e.last_name), lower(e.first_name), e.id LIMIT 10001`, [search],
     );
+    if (people.length > 10_000) throw new PeopleError("More than 10,000 people match. Narrow the export by name or work email.");
     await audit(client, member, "custom_field.exported", { detail: `${people.length} records` });
     return [["Name", "Work email", ...fields.map((field) => field.label)], ...people.map((person) => [person.name, person.email, ...fields.map((field) => {
       const value = person.values[field.id] ?? "";

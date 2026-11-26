@@ -8,6 +8,12 @@ import type { ActionState } from "@/components/workspace/action-state";
 
 export class PeopleError extends Error {}
 
+export async function ensureCurrentTeam(client: PoolClient, teamId: string | null) {
+  if (!teamId) return;
+  const { rowCount } = await client.query("SELECT 1 FROM teams WHERE id = $1 AND archived_at IS NULL", [teamId]);
+  if (!rowCount) throw new PeopleError("Choose a current team.");
+}
+
 // Every administrative write takes one lock, which keeps reporting lines, role grants and pay runs serial.
 export async function runAsAdmin<T>(member: Member, run: (client: PoolClient) => Promise<T>) {
   return transaction(async (client) => {
@@ -78,6 +84,7 @@ export function failed(error: unknown): ActionState {
   if (error instanceof PeopleError) return { error: error.message };
   const databaseError = typeof error === "object" && error ? error as { code?: string; constraint?: string } : {};
   if (databaseError.code === "23505" && databaseError.constraint && conflicts[databaseError.constraint]) return conflicts[databaseError.constraint];
+  if (databaseError.constraint === "employment_periods_overlap") return { error: "The start date overlaps a previous employment period.", fields: { hireDate: ["Choose a date on or after the previous last day."] } };
   if (databaseError.code === "23503") return { error: "A selected record changed. Reload the page and try again." };
   console.error("OpenWarp could not save a change", databaseError.code ?? (error instanceof Error ? error.name : "unknown"));
   return { error: "We couldn’t save your changes. Try again in a moment." };

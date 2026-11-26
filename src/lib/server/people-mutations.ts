@@ -4,7 +4,7 @@ import { statusLabels, type EmployeeFilters, type EmployeeInput, type EmployeeSt
 import { employeeColumns, employeeFilterValues, employeeFrom, employeeOrder, employeeWhere, type Employee } from "./directory";
 import type { Member } from "./member";
 import { archiveBlockers, onOffboarding, onOnboarding } from "./modules";
-import { audit, PeopleError, runAsAdmin } from "./write";
+import { audit, ensureCurrentTeam, PeopleError, runAsAdmin } from "./write";
 
 export { PeopleError };
 
@@ -17,12 +17,6 @@ async function currentEmployee(client: PoolClient, id: string, version?: number)
   if (!employee) throw new PeopleError("This employee could not be found.");
   if (version !== undefined && employee.version !== version) throw new PeopleError("This profile changed while you were editing. Reload it and try again.");
   return employee;
-}
-
-async function ensureCurrentTeam(client: PoolClient, teamId: string | null) {
-  if (!teamId) return;
-  const { rowCount } = await client.query("SELECT 1 FROM teams WHERE id = $1 AND archived_at IS NULL", [teamId]);
-  if (!rowCount) throw new PeopleError("Choose a current team.");
 }
 
 async function ensureManager(client: PoolClient, managerId: string | null, employeeId: string | null = null) {
@@ -191,11 +185,12 @@ export function rehireEmployee(member: Member, input: { id: string; version: num
 
 export function saveTeam(member: Member, name: string, existing?: { id: string; version: number }) {
   return runAsAdmin(member, async (client) => {
-    const { rows } = existing ? await client.query<{ id: string }>(
-      "UPDATE teams SET name = $1, version = version + 1 WHERE id = $2 AND version = $3 AND archived_at IS NULL RETURNING id", [name, existing.id, existing.version],
-    ) : await client.query<{ id: string }>("INSERT INTO teams (name) VALUES ($1) RETURNING id", [name]);
+    const { rows } = existing ? await client.query<{ id: string; previous: string }>(
+      `WITH previous AS (SELECT id, name FROM teams WHERE id = $2 AND version = $3 AND archived_at IS NULL)
+       UPDATE teams t SET name = $1, version = version + 1 FROM previous WHERE t.id = previous.id RETURNING t.id, previous.name AS previous`, [name, existing.id, existing.version],
+    ) : await client.query<{ id: string; previous: null }>("INSERT INTO teams (name) VALUES ($1) RETURNING id, NULL AS previous", [name]);
     if (!rows[0]) throw new PeopleError("This team changed while you were editing. Reload it and try again.");
-    await audit(client, member, existing ? "team.updated" : "team.created", { teamId: rows[0].id });
+    await audit(client, member, existing ? "team.updated" : "team.created", { teamId: rows[0].id, detail: rows[0].previous ? `${rows[0].previous} → ${name}` : name });
     return rows[0].id;
   });
 }
@@ -204,6 +199,14 @@ export function archiveTeam(member: Member, id: string) {
   return runAsAdmin(member, async (client) => {
     const { rowCount: used } = await client.query("SELECT 1 FROM employees WHERE team_id = $1 AND status <> 'archived' LIMIT 1", [id]);
     if (used) throw new PeopleError("Move everyone out of this team before archiving it.");
+    const { rows: references } = await client.query<{ area: string }>(
+      `SELECT 'announcements' AS area WHERE EXISTS (SELECT 1 FROM announcements WHERE team_id=$1 AND removed_at IS NULL AND (expires_on IS NULL OR expires_on >= current_date))
+       UNION ALL SELECT 'active routines' WHERE EXISTS (SELECT 1 FROM routines WHERE state='active' AND conditions->>'teamId'=$1::uuid::text)
+       UNION ALL SELECT 'training assignment rules' WHERE EXISTS (SELECT 1 FROM course_rules r JOIN courses c ON c.id=r.course_id WHERE r.team_id=$1 AND c.archived_at IS NULL)
+       UNION ALL SELECT 'app access defaults' WHERE EXISTS (SELECT 1 FROM app_defaults d JOIN apps a ON a.id=d.app_id WHERE d.team_id=$1 AND a.archived_at IS NULL)
+       UNION ALL SELECT 'planned roles' WHERE EXISTS (SELECT 1 FROM planned_roles WHERE team_id=$1 AND status IN ('planned','open'))`, [id],
+    );
+    if (references.length) throw new PeopleError(`Before archiving this team, update its ${references.map(row => row.area).join(", ")}.`);
     const { rows } = await client.query<{ name: string }>("UPDATE teams SET archived_at = now(), version = version + 1 WHERE id = $1 AND archived_at IS NULL RETURNING name", [id]);
     if (!rows[0]) throw new PeopleError("This team is already archived.");
     await audit(client, member, "team.archived", { teamId: id });

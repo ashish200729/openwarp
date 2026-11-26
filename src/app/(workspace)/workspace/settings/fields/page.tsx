@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { DownloadSimpleIcon, PlusIcon } from "@/components/icons";
-import { panelStyle, primaryButton, secondaryButton, textButton } from "@/components/ui";
+import { inputStyle, panelStyle, primaryButton, secondaryButton, textButton } from "@/components/ui";
 import { ActionButtons, ActionForm, Checkbox, Field } from "@/components/workspace/action-form";
 import { BackLink, Empty, Notice, PageHeader, Section } from "@/components/workspace/presentation";
 import { customFieldKinds, customFieldLabels, fieldVisibilities, visibilityLabels } from "@/lib/domains/records";
@@ -34,12 +34,15 @@ export default async function CustomFieldsPage({ searchParams }: { searchParams:
   return <>
     <BackLink href="/workspace/settings">Settings</BackLink>
     <PageHeader title="Custom fields" description="Extra details to keep about each person. They appear on the Personal tab." actions={<>
-      {active.length > 0 && <a href="/workspace/settings/fields/export" className={secondaryButton}><DownloadSimpleIcon aria-hidden="true" size={15} /> Export CSV</a>}
       {query.new !== "1" && <Link href="/workspace/settings/fields?new=1" className={primaryButton}><PlusIcon aria-hidden="true" size={15} weight="bold" /> Add field</Link>}
     </>} />
     {query.saved === "field" && <Notice>Field saved.</Notice>}
     {query.new === "1" ? <FieldForm /> : editing && <FieldForm key={`${editing.id}-${editing.version}`} field={editing} />}
     <div className="grid max-w-3xl gap-9">
+      {active.length > 0 && <Section title="Export field values"><form action="/workspace/settings/fields/export" className="flex flex-wrap items-end gap-3 pt-3">
+        <label className="grid gap-1.5 text-sm font-medium">Name or work email<input className={inputStyle} type="search" name="q" maxLength={120} placeholder="All current employees" /></label>
+        <button className={secondaryButton}><DownloadSimpleIcon aria-hidden="true" size={15} /> Export CSV</button>
+      </form></Section>}
       <Section title="Fields">{active.length ? <ul className="divide-y divide-line">{active.map((field) => <li key={field.id} className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 py-3 text-sm">
         <div className="min-w-0"><p className="font-medium wrap-anywhere">{field.label}</p><p className="text-[13px] text-muted">{customFieldLabels[field.kind]}{field.kind === "choice" && ` (${field.options.length})`}, visible to {visibilityLabels[field.visibility].toLowerCase()}{field.employeeEditable && ", people can fill it in"}{field.requiredForOnboarding && ", asked during onboarding"}</p></div>
         <div className="flex items-center gap-1.5"><Link href={`/workspace/settings/fields?edit=${field.id}`} className={`${textButton} min-h-10! text-[13px] pointer-fine:min-h-8!`}>Edit<span className="sr-only"> {field.label}</span></Link>

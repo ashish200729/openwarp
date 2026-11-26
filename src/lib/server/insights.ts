@@ -15,9 +15,31 @@ export async function readOrg(member: Member) {
   const { rows } = await pool().query<OrgPerson>(
     `SELECT e.id, concat_ws(' ', e.first_name, e.last_name) AS name, e.title, t.name AS "teamName", e.manager_id AS "managerId"
      FROM employees e LEFT JOIN teams t ON t.id = e.team_id WHERE e.status = 'active' OR ($1 = 'admin' AND e.status <> 'archived')
-     ORDER BY lower(e.last_name), lower(e.first_name), e.id LIMIT 2000`, [member.role],
+     ORDER BY lower(e.last_name), lower(e.first_name), e.id LIMIT 2001`, [member.role],
   );
   return rows;
+}
+
+// Large directories expand one reporting level at a time. A hidden manager makes their visible report a root.
+export async function orgLevel(member: Member, managerId: string | null, requested: number) {
+  const manager = managerId ? (await pool().query<{ name: string }>(
+    `SELECT concat_ws(' ', first_name, last_name) AS name FROM employees WHERE id=$1 AND (status='active' OR ($2='admin' AND status<>'archived'))`, [managerId, member.role],
+  )).rows[0] : null;
+  if (managerId && !manager) return null;
+  const from = `FROM employees e WHERE (e.status='active' OR ($1='admin' AND e.status<>'archived'))
+    AND (CASE WHEN $2::uuid IS NOT NULL THEN e.manager_id=$2 ELSE NOT EXISTS
+      (SELECT 1 FROM employees m WHERE m.id=e.manager_id AND (m.status='active' OR ($1='admin' AND m.status<>'archived'))) END)`;
+  const args = [member.role, managerId];
+  const { rows: [count] } = await pool().query<{ total: number }>(`SELECT count(*)::int AS total ${from}`, args);
+  const pages = Math.max(1, Math.ceil(count.total / 50));
+  const page = Math.min(requested, pages);
+  const { rows: people } = await pool().query<OrgPerson & { reports: number }>(
+    `SELECT e.id, concat_ws(' ', e.first_name, e.last_name) AS name, e.title, e.manager_id AS "managerId",
+      (SELECT name FROM teams t WHERE t.id=e.team_id) AS "teamName",
+      (SELECT count(*)::int FROM employees r WHERE r.manager_id=e.id AND (r.status='active' OR ($1='admin' AND r.status<>'archived'))) AS reports
+      ${from} ORDER BY lower(e.last_name), lower(e.first_name), e.id LIMIT 50 OFFSET $3`, [...args, (page - 1) * 50],
+  );
+  return { manager, people, pages, page };
 }
 
 export type PeopleFilters = { teamId: string; location: string; type: string };

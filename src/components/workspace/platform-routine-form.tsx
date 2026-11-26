@@ -38,7 +38,7 @@ export function RoutineForm({ routine, events, teams, webhooks }: FormProps) {
       </>}
     </fieldset>
     <fieldset className="grid min-w-0 gap-4 sm:grid-cols-3"><legend className="mb-3 text-sm font-semibold">For whom</legend>
-      <Field name="teamId" label="Team" defaultValue={conditions?.teamId ?? ""} options={[{ value: "", label: "Any team" }, ...named(teams)]} />
+      <Field name="teamId" label="Team" defaultValue={conditions?.teamId ?? ""} options={[{ value: "", label: "Any team" }, ...named(teams), ...(conditions?.teamId && !teams.some(team => team.id === conditions.teamId) ? [{ value: conditions.teamId, label: "Previous team (archived)" }] : [])]} />
       <Field name="employmentType" label="Employment type" defaultValue={conditions?.employmentType ?? ""} options={[{ value: "", label: "Any type" }, ...employmentTypes.map((value) => ({ value, label: employmentLabels[value] }))]} />
       <Field name="status" label="Status" defaultValue={conditions?.status ?? ""} options={[{ value: "", label: "Any status" }, ...statuses.filter((value) => value !== "archived").map((value) => ({ value, label: statusLabels[value] }))]} />
     </fieldset>
