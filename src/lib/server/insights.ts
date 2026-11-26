@@ -47,16 +47,22 @@ export const noFilters: PeopleFilters = { teamId: "", location: "", type: "" };
 // Placeholders $1 to $3 narrow any query over employees e.
 export const peopleWhere = `(NULLIF($1, '') IS NULL OR e.team_id = NULLIF($1, '')::uuid) AND ($2 = '' OR lower(trim(e.location)) = lower($2)) AND ($3 = '' OR e.employment_type = $3)`;
 export const peopleValues = (filters: PeopleFilters) => [filters.teamId, filters.location, filters.type];
-export const employedOn = (day: string) => `(e.hire_date <= ${day} AND (e.last_day IS NULL AND e.status <> 'archived' OR e.last_day >= ${day}))`;
+export const employedOn = (day: string) => `EXISTS (
+  SELECT 1 FROM employment_periods ep
+  WHERE ep.employee_id = e.id AND ep.starts_on <= ${day} AND (ep.ends_on IS NULL OR ep.ends_on >= ${day})
+)`;
 
 export async function headcountBetween(from: string, to: string, filters: PeopleFilters = noFilters) {
   await requireAdmin();
   const { rows } = await pool().query<{ month: string; people: number; joined: number; left: number }>(
     `WITH months AS (SELECT generate_series(date_trunc('month', $4::date), date_trunc('month', least($5::date, current_date)), interval '1 month')::date AS first),
      spans AS (SELECT first, greatest(first, $4::date) AS opens, least((first + interval '1 month' - interval '1 day')::date, $5::date, current_date) AS closes FROM months)
-     SELECT to_char(s.first, 'YYYY-MM-DD') AS month, count(*) FILTER (WHERE ${employedOn("s.closes")})::int AS people,
-     count(*) FILTER (WHERE e.hire_date BETWEEN s.opens AND s.closes)::int AS joined, count(*) FILTER (WHERE e.last_day BETWEEN s.opens AND s.closes)::int AS left
-     FROM spans s LEFT JOIN employees e ON ${peopleWhere} GROUP BY s.first ORDER BY s.first`, [...peopleValues(filters), from, to],
+     SELECT to_char(s.first, 'YYYY-MM-DD') AS month,
+       count(DISTINCT e.id) FILTER (WHERE ep.starts_on <= s.closes AND (ep.ends_on IS NULL OR ep.ends_on >= s.closes))::int AS people,
+       count(*) FILTER (WHERE ep.starts_on BETWEEN s.opens AND s.closes)::int AS joined,
+       count(*) FILTER (WHERE ep.ends_on BETWEEN s.opens AND s.closes)::int AS left
+     FROM spans s LEFT JOIN employees e ON ${peopleWhere} LEFT JOIN employment_periods ep ON ep.employee_id = e.id
+     GROUP BY s.first ORDER BY s.first`, [...peopleValues(filters), from, to],
   );
   return rows;
 }
@@ -66,15 +72,23 @@ export function headcountByMonth(months: number) {
   return headcountBetween(addMonths(`${now.slice(0, 7)}-01`, 1 - months), now);
 }
 
-export async function workforceBreakdown(filters: PeopleFilters = noFilters, locationLimit = 6) {
+export async function workforceBreakdown(filters: PeopleFilters = noFilters, locationLimit = 6, asOf = today()) {
   await requireAdmin();
-  const where = `e.status <> 'archived' AND ${peopleWhere}`;
-  const values = peopleValues(filters);
+  const where = `${employedOn("$4::date")} AND ${peopleWhere}`;
+  const values = [...peopleValues(filters), asOf];
   const [types, locations, teams, tenure] = await Promise.all([
     pool().query<{ type: EmploymentType; people: number }>(`SELECT e.employment_type AS type, count(*)::int AS people FROM employees e WHERE ${where} GROUP BY 1 ORDER BY 2 DESC, 1`, values),
-    pool().query<{ location: string; people: number }>(`SELECT coalesce(nullif(min(trim(e.location)), ''), 'No location') AS location, count(*)::int AS people FROM employees e WHERE ${where} GROUP BY lower(trim(e.location)) ORDER BY 2 DESC, 1 LIMIT $4`, [...values, locationLimit]),
+    pool().query<{ location: string; people: number }>(`SELECT coalesce(nullif(min(trim(e.location)), ''), 'No location') AS location, count(*)::int AS people FROM employees e WHERE ${where} GROUP BY lower(trim(e.location)) ORDER BY 2 DESC, 1 LIMIT $5`, [...values, locationLimit]),
     pool().query<{ team: string; people: number }>(`SELECT coalesce(t.name, 'No team') AS team, count(*)::int AS people FROM employees e LEFT JOIN teams t ON t.id = e.team_id WHERE ${where} GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 100`, values),
-    pool().query<{ years: number | null }>(`SELECT avg((current_date - e.hire_date) / 365.25)::float8 AS years FROM employees e WHERE ${where} AND e.hire_date <= current_date`, values),
+    pool().query<{ years: number | null }>(
+      `SELECT avg(($4::date - ep.starts_on) / 365.25)::float8 AS years
+       FROM employees e JOIN LATERAL (
+         SELECT starts_on FROM employment_periods
+         WHERE employee_id = e.id AND starts_on <= $4::date AND (ends_on IS NULL OR ends_on >= $4::date)
+         ORDER BY created_at DESC, id DESC LIMIT 1
+       ) ep ON true
+       WHERE ${peopleWhere}`, values,
+    ),
   ]);
   return { types: types.rows, locations: locations.rows, teams: teams.rows, tenure: tenure.rows[0].years };
 }

@@ -19,7 +19,7 @@ export const metadata: Metadata = { title: "Reports" };
 const url = (query: string) => query ? `/workspace/reports?${query}` : "/workspace/reports";
 
 async function Headcount({ filters }: { filters: ReportFilters }) {
-  const [months, { types, locations, teams, tenure }] = await Promise.all([headcountBetween(filters.from, filters.to, filters), workforceBreakdown(filters)]);
+  const [months, { types, locations, teams, tenure }] = await Promise.all([headcountBetween(filters.from, filters.to, filters), workforceBreakdown(filters, 6, filters.to)]);
   const total = types.reduce((sum, entry) => sum + entry.people, 0);
   const joined = months.reduce((sum, entry) => sum + entry.joined, 0);
   const left = months.reduce((sum, entry) => sum + entry.left, 0);
@@ -69,13 +69,16 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
   const [tables, teams, locations, saved] = await Promise.all([reportTables(view, filters), listTeams(member), listLocations(), listViews(member)]);
   const narrowed = query !== reportQuery(view, reportFilters({}));
   return <>
-    <PageHeader title="Reports" description="Calculated from what is recorded here: start dates, last days, requests and current profiles." />
+    <PageHeader title="Reports" description="Calculated from recorded employment periods, requests and current profiles. Historical people are attributed to their current team, location and employment type." />
     <SubNav label="Reports" current={url(query)} links={reportViews.map((value) => ({ href: url(reportQuery(value, filters)), label: reportViewLabels[value] }))} />
     <Filters label="Filter report" action="/workspace/reports" hidden={{ view: view === "headcount" ? "" : view }} clear={narrowed && url(reportQuery(view, reportFilters({})))} fields={[
       { name: "team", label: "Team", value: filters.teamId, options: [{ value: "", label: "All teams" }, ...teams.map((team) => ({ value: team.id, label: team.name }))] },
       { name: "location", label: "Location", value: filters.location, options: [{ value: "", label: "All locations" }, ...locations.map((value) => ({ value, label: value }))] },
       { name: "type", label: "Employment type", value: filters.type, options: [{ value: "", label: "All types" }, ...employmentTypes.map((value) => ({ value, label: employmentLabels[value] }))] },
-      { name: "from", label: "From", value: filters.from, type: "date" }, { name: "to", label: "To", value: filters.to, type: "date" },
+      ...(view === "headcount" || view === "turnover" ? [
+        { name: "from", label: "From", value: filters.from, type: "date" as const },
+        { name: "to", label: "To", value: filters.to, type: "date" as const },
+      ] : []),
     ]} />
     {view === "headcount" && <Headcount filters={filters} />}
     <ReportTables tables={tables} view={view} query={query} />
