@@ -2,12 +2,13 @@ import "server-only";
 import type { PoolClient } from "pg";
 import type { Member } from "./member";
 import * as pay from "./pay-module";
+import * as records from "./records-module";
 import * as time from "./time-module";
 
 export type Todo = { key: string; href: string; title: string; detail: string; meta: string };
 
 // Each module contributes to the home page and to the employee lifecycle through the same small set of functions.
-const modules = [time, pay];
+const modules = [time, pay, records];
 
 export async function moduleTodos(member: Member): Promise<Todo[]> {
   return (await Promise.all(modules.map((entry) => entry.todos(member)))).flat();

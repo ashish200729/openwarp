@@ -1,0 +1,5 @@
+@media print {
+  body:has([data-certificate]) :is(aside, div:has(> main) > header, [data-screen]) { display: none !important; }
+  body:has([data-certificate]) main { max-width: none; padding: 0; }
+  body:has([data-certificate]) { color-scheme: light; }
+}

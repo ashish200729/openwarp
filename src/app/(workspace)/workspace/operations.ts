@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import type { ActionState } from "@/components/workspace/action-state";
 import { accountCommandFields, accountFields, accountLinkFields, compensationFields, decisionFields, expenseFields, payRunCommandFields, payRunFields, timeOffFields, timeOffTypeFields } from "@/lib/operations";
 import { createAccount, linkAccount, resetAccount, setAccountRole } from "@/lib/server/accounts";
-import { readUpload } from "@/lib/server/documents";
+import { acknowledgeDocument, archiveDocument, readUpload } from "@/lib/server/documents";
 import { decideExpense, submitExpense } from "@/lib/server/expenses";
 import { requireAdmin, requireMember } from "@/lib/server/member";
 import { addCompensation, commandPayRun, createPayRun } from "@/lib/server/pay";
@@ -36,6 +36,14 @@ export async function decideExpenseAction(_state: ActionState, data: FormData) {
 
 export async function addCompensationAction(_state: ActionState, data: FormData) {
   return perform(requireAdmin, compensationFields, data, async (member, input) => { await addCompensation(member, input); return "Pay recorded."; });
+}
+
+export async function archiveDocumentAction(_state: ActionState, data: FormData) {
+  return perform(requireAdmin, decisionFields.pick({ id: true }), data, (member, { id }) => archiveDocument(member, id));
+}
+
+export async function acknowledgeDocumentAction(_state: ActionState, data: FormData) {
+  return perform(requireMember, decisionFields.pick({ id: true }), data, (member, { id }) => acknowledgeDocument(member, id));
 }
 
 export async function createPayRunAction(_state: ActionState, data: FormData) {
