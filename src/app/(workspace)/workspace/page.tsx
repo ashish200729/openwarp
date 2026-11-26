@@ -1,3 +1,6 @@
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
+import { entryCookie } from "@/lib/server/entry";
 import type { Metadata } from "next";
 import Link from "next/link";
 import type { ReactNode } from "react";
@@ -31,6 +34,7 @@ function TodoList({ items }: { items: { key: string; href: string; title: string
 
 export default async function HomePage() {
   const member = await requireMember();
+  if ((await cookies()).has(entryCookie)) redirect("/get-started/continue");
   const canManage = member.role === "admin";
   const decides = canManage || member.managesPeople;
   const day = today();
@@ -63,7 +67,7 @@ export default async function HomePage() {
 
   return <>
     <PageHeader title="People overview" actions={canManage
-      ? <Link href="/workspace/people/new" className={primaryButton}><PlusIcon aria-hidden="true" size={15} weight="bold" /> Add employee</Link>
+      ? <>{!people.length && <Link className={secondaryButton} href="/workspace/setup">Company setup</Link>}<Link href="/workspace/people/new" className={primaryButton}><PlusIcon aria-hidden="true" size={15} weight="bold" /> Add employee</Link></>
       : member.employeeId && <Link href="/workspace/time-off?new=1" className={primaryButton}>Request time off</Link>} />
     <FigureRow>{figures}</FigureRow>
     {announcements.length > 0 && <Section title="Announcements" className="mb-9" action={<Link href="/workspace/announcements" className={`${textLink} text-[13px]`}>All announcements</Link>}><ul className="divide-y divide-line">{announcements.map((entry) => <li key={entry.id}><Link href="/workspace/announcements" className="group flex items-baseline justify-between gap-4 py-2.5 text-sm"><span className="font-medium wrap-anywhere group-hover:underline">{entry.title}</span><span className="shrink-0 text-[13px] text-muted">{entry.needsAcknowledgement && !entry.acknowledged ? "Needs your acknowledgement" : formatDate(entry.publishOn)}</span></Link></li>)}</ul></Section>}

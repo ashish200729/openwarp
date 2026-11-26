@@ -61,7 +61,7 @@ export function SignInForm() {
   );
 }
 
-export function SignOutButton({ compact = false }: { compact?: boolean }) {
+export function SignOutButton({ compact = false, stayOnPage = false }: { compact?: boolean; stayOnPage?: boolean }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
 
@@ -71,7 +71,8 @@ export function SignOutButton({ compact = false }: { compact?: boolean }) {
     try {
       const response = await fetch("/api/auth/sign-out", { ...fetchOptions, body: "{}" });
       if (!response.ok) throw new Error();
-      navigateAfterSessionChange("/login");
+      if (stayOnPage) window.location.reload();
+      else navigateAfterSessionChange("/login");
     } catch {
       setError("Sign-out failed. Try again.");
       setPending(false);

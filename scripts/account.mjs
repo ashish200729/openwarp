@@ -62,6 +62,7 @@ try {
         if (!rowCount) throw new Error("Keep at least one administrator account.");
       }
       await db.query("UPDATE workspace_members SET role = $2 WHERE user_id = $1", [user.id, role.data]);
+      await db.query("UPDATE password_tokens SET used_at = now() WHERE user_id = $1 AND used_at IS NULL", [user.id]);
       await db.query('DELETE FROM "session" WHERE "userId" = $1', [user.id]);
       await db.query("INSERT INTO activity_log (event, subject_user_id, detail) VALUES ('account.role_changed', $1, $2)", [user.id, `${user.role} to ${role.data}`]);
     }

@@ -4,7 +4,7 @@ import { employmentTypes, statuses } from "@/lib/people";
 export const platformActivity = {
   "two_factor.enabled": "Turned on two-factor sign-in", "two_factor.disabled": "Turned off two-factor sign-in",
   "two_factor.reset": "Reset two-factor sign-in", "two_factor.codes_replaced": "Replaced backup codes",
-  "account.signed_out": "Signed an account out everywhere", "account.invited": "Emailed an account invitation", "account.sso_linked": "Linked single sign-on", "account.sso_unlinked": "Unlinked single sign-on",
+  "account.signed_out": "Signed an account out everywhere", "account.invitation_revoked": "Revoked an invitation link", "account.invited": "Issued an account invitation", "account.sso_linked": "Linked single sign-on", "account.sso_unlinked": "Unlinked single sign-on",
   "security.updated": "Changed the security policy", "email.tested": "Sent a test email",
   "api_token.created": "Created an API token", "api_token.revoked": "Revoked an API token", "api.changed": "Made a change through the API",
   "webhook.created": "Added a webhook", "webhook.updated": "Changed a webhook", "webhook.deleted": "Deleted a webhook", "webhook.disabled": "Turned off a failing webhook",

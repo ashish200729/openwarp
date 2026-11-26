@@ -33,7 +33,7 @@ export function MobileMenu({ links }: { links: { label: string; href: string }[]
       </summary>
       <nav aria-label="Mobile navigation" className="absolute inset-x-3 top-full mt-2 grid max-h-[calc(100dvh-5.5rem)] gap-1 overflow-y-auto rounded-[10px] border border-line-strong bg-panel p-1.5 shadow-float">
         {links.map(({ label, href }) => <a key={href} href={href} onClick={close} className="flex min-h-12 items-center rounded-[7px] px-3 text-[15px] hover:bg-raised">{label}</a>)}
-        <Link href="/login" className={cn(primaryButton, "mt-1 min-h-12! sm:hidden")}>Open workspace</Link>
+        <Link href="/get-started" className={cn(primaryButton, "mt-1 min-h-12! sm:hidden")}>Open workspace</Link>
       </nav>
     </details>
   );

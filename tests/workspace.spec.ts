@@ -67,6 +67,8 @@ test("public landing is accessible and reflows on phones and desktops", async ({
   await page.keyboard.press("Enter");
   await expect(page.getByRole("main")).toBeFocused();
   await page.getByRole("link", { name: "Open workspace" }).click();
+  await expect(page.getByRole("heading", { name: "How will you use OpenWarp?" })).toBeVisible();
+  await page.getByRole("link", { name: "Sign in", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Sign in to OpenWarp" })).toBeVisible();
   await checkA11y(page);
 });
@@ -272,14 +274,18 @@ test("private pages use fresh script nonces and auth limits request size and rep
 
   const oversized = await request.post("/api/auth/sign-in/email", { data: { email: "x".repeat(10_000), password: "invalid-password" } });
   expect(oversized.status()).toBe(413);
-  const statusCodes: number[] = [];
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    const response = await request.post("/api/auth/sign-in/email", {
-      headers: { Origin: baseURL! },
-      data: { email: "unknown@openwarp.example", password: "invalid-password" },
-    });
-    statusCodes.push(response.status());
+  const attemptSignIn = () => request.post("/api/auth/sign-in/email", {
+    headers: { Origin: baseURL! },
+    data: { email: "unknown@openwarp.example", password: "invalid-password" },
+  });
+  let firstAttempt = await attemptSignIn();
+  if (firstAttempt.status() === 429) {
+    // Earlier browser workflows can exhaust the shared one-minute sign-in window.
+    await page.waitForTimeout(61_000);
+    firstAttempt = await attemptSignIn();
   }
-  expect(statusCodes).toContain(401);
+  expect(firstAttempt.status()).toBe(401);
+  const statusCodes = [firstAttempt.status()];
+  for (let attempt = 1; attempt < 10; attempt += 1) statusCodes.push((await attemptSignIn()).status());
   expect(statusCodes).toContain(429);
 });

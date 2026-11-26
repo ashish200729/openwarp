@@ -23,7 +23,8 @@ export function proxy(request: NextRequest) {
   const response = NextResponse.next({ request: { headers } });
   response.headers.set("Content-Security-Policy", policy);
   response.headers.set("Cache-Control", "private, no-store");
+  if (request.nextUrl.pathname === "/join" || request.nextUrl.pathname === "/login/reset") response.headers.set("Referrer-Policy", "no-referrer");
   return response;
 }
 
-export const config = { matcher: ["/", "/login/:path*", "/welcome", "/two-factor", "/workspace/:path*"] };
+export const config = { matcher: ["/", "/login/:path*", "/get-started/:path*", "/join", "/welcome", "/two-factor", "/workspace/:path*"] };

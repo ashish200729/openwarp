@@ -31,6 +31,7 @@ export default async function SignInPage({ searchParams }: { searchParams: Promi
       {query.saved === "password" && <div className="mt-5 -mb-5"><Notice>Password saved. Sign in with it.</Notice></div>}
       {query.sso && Object.hasOwn(ssoProblems, query.sso) && <div className="mt-5"><FormError error={ssoProblems[query.sso]} /></div>}
       <SignInForm />
+      <p className="mt-4 text-sm text-muted">New here? <Link className={textLink} href="/get-started">Get started</Link></p>
       {ssoConfigured() && <div className="mt-4 grid gap-4">
         <p className="flex items-center gap-3 text-[13px] text-muted before:h-px before:flex-1 before:bg-line after:h-px after:flex-1 after:bg-line">or</p>
         {/* A plain link, so nothing prefetches it and starts a sign-in. */}

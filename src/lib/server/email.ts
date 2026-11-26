@@ -223,11 +223,16 @@ export async function queueEmail(client: Pick<PoolClient, "query">, { userId, ki
 
 export const hashPasswordToken = (token: string) => keyedHash(token, "password-token");
 
-export async function queuePasswordLink(client: PoolClient, userId: string, purpose: "reset" | "invitation") {
+export async function issuePasswordLink(client: PoolClient, userId: string, purpose: "reset" | "invitation") {
   const token = randomBytes(32).toString("base64url");
-  await client.query("UPDATE password_tokens SET used_at = now() WHERE user_id = $1 AND used_at IS NULL", [userId]);
-  await client.query("INSERT INTO password_tokens (token_hash, user_id, purpose, expires_at) VALUES ($1, $2, $3, now() + $4::interval)", [hashPasswordToken(token), userId, purpose, purpose === "reset" ? "30 minutes" : "7 days"]);
-  const link = `${workspaceOrigin()}/login/reset?token=${token}`;
+  const hash = hashPasswordToken(token);
+  await client.query("UPDATE password_tokens SET used_at = now() WHERE user_id = $1 AND purpose = $2 AND used_at IS NULL", [userId, purpose]);
+  await client.query("INSERT INTO password_tokens (token_hash, user_id, purpose, expires_at) VALUES ($1, $2, $3, now() + $4::interval)", [hash, userId, purpose, purpose === "reset" ? "30 minutes" : "7 days"]);
+  return { link: `${workspaceOrigin()}${purpose === "reset" ? "/login/reset" : "/join"}?token=${token}`, version: hash.slice(0, 24) };
+}
+
+export async function queuePasswordLink(client: PoolClient, userId: string, purpose: "reset" | "invitation") {
+  const { link } = await issuePasswordLink(client, userId, purpose);
   await queueEmail(client, purpose === "reset"
     ? { userId, kind: "reset", subject: "Reset your password", text: `Someone asked to reset your password. Open this link within 30 minutes to choose a new one. It works once.\n\n${link}\n\nIf it wasn’t you, ignore this email. Your password hasn’t changed.` }
     : { userId, kind: "invitation", subject: `Your account for ${workspaceName()}`, text: `You have an account for ${workspaceName()}. Open this link within 7 days to choose your password. It works once.\n\n${link}` });
@@ -236,7 +241,7 @@ export async function queuePasswordLink(client: PoolClient, userId: string, purp
 export async function queueInvitation(client: PoolClient, userId: string, role: "admin" | "viewer") {
   if (!emailConfigured()) return;
   if (passwordAllowed(await readPolicy(client), role)) return queuePasswordLink(client, userId, "invitation");
-  await queueEmail(client, { userId, kind: "invitation", subject: `Your account for ${workspaceName()}`, text: `You have an account for ${workspaceName()}. Sign in with ${ssoLabel()}:\n\n${workspaceOrigin()}/login` });
+  await queueEmail(client, { userId, kind: "invitation", subject: `Your account for ${workspaceName()}`, text: `You have an account for ${workspaceName()}. Sign in with ${ssoLabel()}:\n\n${workspaceOrigin()}/join?signin=sso` });
 }
 
 export async function readPreference(member: Member) {

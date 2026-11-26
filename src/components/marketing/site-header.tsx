@@ -23,7 +23,7 @@ export function SiteHeader() {
         </nav>
         <div className="flex items-center gap-1 sm:gap-2">
           <ThemeToggle />
-          <Link href="/login" className={cn(primaryButton, "hidden sm:inline-flex")}>Open workspace</Link>
+          <Link href="/get-started" className={cn(primaryButton, "hidden sm:inline-flex")}>Open workspace</Link>
           <MobileMenu links={siteLinks} />
         </div>
       </div>

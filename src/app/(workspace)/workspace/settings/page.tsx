@@ -35,10 +35,10 @@ export default async function SettingsPage() {
   await requireAdmin();
   const [company, types, holidays, templates] = await Promise.all([readCompany(), listTimeOffTypes(true), listHolidays(`${today().slice(0, 4)}-01-01`), listTemplates()]);
   return <>
-    <PageHeader title="Settings" />
+    <PageHeader title="Settings" actions={<Link href="/workspace/setup" className="inline-flex min-h-11 items-center rounded text-sm font-medium text-accent hover:underline">Company setup</Link>} />
     <div className="grid max-w-3xl gap-10">
       {areas.map((area) => <Section key={area.title} title={area.title}><ul className="divide-y divide-line">{area.links.map((link) => <li key={link.href}><Link href={link.href} className="group flex min-h-13 items-center justify-between gap-4 py-2 text-sm"><span><span className="block font-medium group-hover:underline">{link.label}</span><span className="block text-[13px] text-muted">{link.detail}</span></span><CaretRightIcon aria-hidden="true" size={14} className="shrink-0 text-hint" /></Link></li>)}</ul></Section>)}
-      <Section title="Currency and schedule"><div className="pt-3"><ActionForm key={company.version} action={saveCompanyAction} submit="Save" hidden={{ version: company.version }} inline>
+      <Section title="Currency and schedule" id="pay-defaults"><div className="pt-3"><ActionForm key={company.version} action={saveCompanyAction} submit="Save" hidden={{ version: company.version }} inline>
         <Field name="currency" label="Currency" required defaultValue={company.currency} options={currencies.map((value) => ({ value, label: value }))} wrapperClass="w-32" />
         <Field name="schedule" label="Pay schedule" required defaultValue={company.schedule} options={paySchedules.map((value) => ({ value, label: scheduleLabels[value] }))} wrapperClass="w-full sm:w-52" />
       </ActionForm></div></Section>

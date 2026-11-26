@@ -7,6 +7,8 @@ import type { ActionState } from "@/components/workspace/action-state";
 import { forgotFields, resetFields } from "@/lib/domains/platform";
 import { requestPasswordReset, setPasswordFromLink } from "@/lib/server/accounts";
 import { hasWorkspaceConfig } from "@/lib/server/auth";
+import { currentMember } from "@/lib/server/member";
+import { rememberEntry } from "@/lib/server/entry";
 import { clientAddress, emailConfigured } from "@/lib/server/platform-settings";
 import { failed, invalid } from "@/lib/server/write";
 
@@ -24,7 +26,9 @@ export async function resetPasswordAction(_state: ActionState, data: FormData): 
   const input = resetFields.safeParse(Object.fromEntries(data));
   if (!input.success) return invalid(input.error);
   try {
-    await setPasswordFromLink(input.data, clientAddress(await headers()));
+    const member = await currentMember();
+    const path = await setPasswordFromLink(input.data, clientAddress(await headers()), member?.id ?? null);
+    if (path) await rememberEntry(path);
   } catch (error) {
     return failed(error);
   }
