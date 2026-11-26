@@ -28,7 +28,7 @@ export default async function SchedulePage({ searchParams }: { searchParams: Pro
   const week = parseWeek(query.week, day);
   const teams = admin ? await listTeams(member) : [];
   const teamId = teams.some((team) => team.id === query.team) ? query.team! : "";
-  const [shifts, people, settings] = await Promise.all([listShifts(member, week, teamId), listSchedulable(member), readTimeSettings()]);
+  const [shifts, people, settings] = await Promise.all([listShifts(member, week, teamId), listSchedulable(member, teamId), readTimeSettings()]);
   const plans = people.length > 0;
   const days = weekDays(week);
   const teamQuery = teamId ? `&team=${teamId}` : "";
@@ -47,15 +47,15 @@ export default async function SchedulePage({ searchParams }: { searchParams: Pro
     {notice && <Notice>{notice}</Notice>}
     {open && <section className={`${panelStyle} mb-8 max-w-2xl p-5`}>
       <h2 className="mb-4 text-[15px] font-semibold">{editing ? "Edit shift" : "Add shift"}</h2>
-      <ActionForm key={editing ? `${editing.id}-${editing.version}` : "new"} action={saveShiftAction} submit={editing ? "Save shift" : "Add draft"} hidden={editing ? { id: editing.id, version: editing.version } : {}} secondary={<Link href={base} className={textButton}>Close</Link>}>
+      <ActionForm key={editing ? `${editing.id}-${editing.version}` : "new"} action={saveShiftAction} submit={editing ? "Save shift" : "Add draft"} hidden={{ team: teamId, ...(editing ? { id: editing.id, version: editing.version } : {}) }} secondary={<Link href={base} className={textButton}>Close</Link>}>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field name="employeeId" label="Person" required defaultValue={editing?.employeeId} options={people.map((person) => ({ value: person.id, label: person.name }))} /><Field name="day" label="Date" type="date" required defaultValue={editing?.day ?? (week > day ? week : day)} />
+          <Field name="employeeId" label="Person" required defaultValue={editing?.employeeId} options={people.map((person) => ({ value: person.id, label: person.name }))} /><Field name="day" label="Date" type="date" required defaultValue={editing?.day ?? (days.includes(day) ? day : week)} />
           <Field name="start" label="Start" type="time" required defaultValue={editing?.start ?? "09:00"} /><Field name="end" label="End" type="time" required defaultValue={editing?.end ?? "17:00"} hint="An end before the start means the next day." />
           <Field name="role" label="Role" maxLength={60} defaultValue={editing?.role} /><Field name="note" label="Note" maxLength={200} defaultValue={editing?.note} hint="Shown to this person and their planners." />
         </div>
         {editing?.published && <p className="text-[13px] text-muted">This shift is published. Saving notifies the person.</p>}
       </ActionForm>
-      {editing && <div className="mt-5 border-t border-line pt-4"><ActionButtons action={deleteShiftAction} hidden={{ id: editing.id, version: editing.version }} name="operation" buttons={[{ value: "delete", label: "Delete shift", describe: "Delete shift", variant: "danger", confirm: { title: "Delete this shift?", body: editing.published ? `${editing.name} is notified that it was cancelled.` : "It hasn’t been published, so no one is notified.", action: "Delete", danger: true } }]} /></div>}
+      {editing && <div className="mt-5 border-t border-line pt-4"><ActionButtons action={deleteShiftAction} hidden={{ id: editing.id, version: editing.version, team: teamId }} name="operation" buttons={[{ value: "delete", label: "Delete shift", describe: "Delete shift", variant: "danger", confirm: { title: "Delete this shift?", body: editing.published ? `${editing.name} is notified that it was cancelled.` : "It hasn’t been published, so no one is notified.", action: "Delete", danger: true } }]} /></div>}
     </section>}
     {admin && teams.length > 0 && <form key={`${week}-${teamId}`} method="get" action="/workspace/schedule" className="mb-5 flex flex-wrap items-end gap-3">
       <input type="hidden" name="week" value={week} />

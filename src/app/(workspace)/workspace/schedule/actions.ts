@@ -7,14 +7,14 @@ import { requireMember } from "@/lib/server/member";
 import { perform } from "@/lib/server/perform";
 import { copyWeek, deleteShift, publishWeek, saveShift } from "@/lib/server/schedule";
 
-const url = (week: string, saved: string) => `/workspace/schedule?week=${week}&saved=${saved}`;
+const url = (week: string, saved: string, team = "") => `/workspace/schedule?week=${week}&saved=${saved}${team ? `&team=${team}` : ""}`;
 
 export async function saveShiftAction(_state: ActionState, data: FormData) {
-  return perform(requireMember, shiftFields, data, async (member, input) => ({ redirect: url(weekStart(input.day), await saveShift(member, input) ? "half" : "shift") }));
+  return perform(requireMember, shiftFields, data, async (member, input) => ({ redirect: url(weekStart(input.day), await saveShift(member, input) ? "half" : "shift", input.team) }));
 }
 
 export async function deleteShiftAction(_state: ActionState, data: FormData) {
-  return perform(requireMember, shiftRemovalFields, data, async (member, input) => ({ redirect: url(await deleteShift(member, input), "deleted") }));
+  return perform(requireMember, shiftRemovalFields, data, async (member, input) => ({ redirect: url(await deleteShift(member, input), "deleted", input.team) }));
 }
 
 export async function scheduleAction(_state: ActionState, data: FormData) {

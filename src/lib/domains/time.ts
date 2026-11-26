@@ -38,10 +38,10 @@ export const sheetCommandFields = z.object({
   employeeId: z.uuid(), week: workDate, version: z.coerce.number().int().min(0), operation: z.enum(["submit", "withdraw", "approve", "return", "reopen"]), note: z.string().trim().max(500).default(""),
 });
 export const shiftFields = z.object({
-  id: optionalUuid, version: z.coerce.number().int().min(0).default(0), employeeId: z.uuid("Choose a person."), day: workDate, start: clockTime, end: clockTime,
+  team: optionalUuid, id: optionalUuid, version: z.coerce.number().int().min(0).default(0), employeeId: z.uuid("Choose a person."), day: workDate, start: clockTime, end: clockTime,
   role: z.string().trim().max(60).default(""), note: z.string().trim().max(200).default(""),
 }).refine((value) => value.start !== value.end, { path: ["end"], message: "The end must be different from the start." });
-export const shiftRemovalFields = z.object({ id: z.uuid(), version });
+export const shiftRemovalFields = z.object({ id: z.uuid(), version, team: optionalUuid });
 export const scheduleCommandFields = z.object({ week: workDate, team: optionalUuid, operation: z.enum(["publish", "copy"]) });
 export const trackingFields = z.object({
   version, timeZone: z.string().min(1).max(64), tracking: flag, trackSalaried: flag, weeklyHours: hours(168), dailyHours: z.union([z.literal("").transform(() => null), hours(24)]),
